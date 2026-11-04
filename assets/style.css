@@ -157,7 +157,8 @@ input.switch:focus-visible { outline: 2px solid var(--rmit-red); outline-offset:
 .loading-card { display: grid; justify-items: center; gap: 0; animation: fade-in .6s ease both; }
 @keyframes fade-in { from { opacity: 0; } }
 .loading-lockup { display: block; width: min(320px, 72vw); height: auto; }
-.loading .bar { width: min(240px, 60vw); height: 2px; margin-top: 40px; background: rgba(255, 255, 255, .18); overflow: hidden; }
+.loading-title { margin-top: 28px; font-size: 20px; font-weight: 600; letter-spacing: .02em; }
+.loading .bar { width: min(240px, 60vw); height: 2px; margin-top: 28px; background: rgba(255, 255, 255, .18); overflow: hidden; }
 .loading .bar div { height: 100%; width: 0; background: #fff; transition: width .25s; }
 .loading-status { margin-top: 14px; font-size: 12px; letter-spacing: .02em; color: rgba(255, 255, 255, .6); font-variant-numeric: tabular-nums; }
 #load-pct:not(:empty)::before { content: " · "; }
