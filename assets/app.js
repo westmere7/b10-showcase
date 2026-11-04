@@ -159,7 +159,7 @@ async function boot() {
   let doneBytes = 0;
   const bar = (f, entry) => {
     const pct = Math.min(100, ((doneBytes + f * entry.bytes) / total) * 100);
-    $('#load-progress').style.width = `${pct.toFixed(1)}%`;
+    $('#load-progress').style.height = `${pct.toFixed(1)}%`;
     $('#load-pct').textContent = `${Math.floor(pct)}%`;
   };
   const preparing = [];
