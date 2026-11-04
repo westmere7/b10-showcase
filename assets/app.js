@@ -146,24 +146,20 @@ function fail(msg) {
 function addLayer(entry, root) {
   root.updateMatrixWorld(true);
   const buckets = new Map();
-  const box = new THREE.Box3(), size = new THREE.Vector3();
   root.traverse((o) => {
     if (!o.isMesh) return;
     const g = o.geometry;
-    // large flat parts (a zone's own floor platform / carpet) are "floor", not exhibits: never tinted
-    box.setFromObject(o).getSize(size);
-    const floor = size.y < 0.12 && size.x * size.z > 4;
     const sig = Object.keys(g.attributes).sort()
       .map((k) => `${k}:${g.attributes[k].itemSize}:${g.attributes[k].normalized}:${g.attributes[k].array.constructor.name}`)
       .join('|') + (g.index ? '#i' : '#n');
-    const key = `${o.material.uuid}|${sig}|${floor ? 'floor' : 'obj'}`;
-    if (!buckets.has(key)) buckets.set(key, { material: o.material, parts: [], floor });
+    const key = `${o.material.uuid}|${sig}`;
+    if (!buckets.has(key)) buckets.set(key, { material: o.material, parts: [] });
     buckets.get(key).parts.push(o);
   });
   const group = new THREE.Group();
   group.name = entry.id;
   const meshes = [];
-  for (const { material, parts, floor } of buckets.values()) {
+  for (const { material, parts } of buckets.values()) {
     const geos = parts.map((o) => {
       const g = o.geometry.clone();
       g.morphAttributes = {};
@@ -177,7 +173,6 @@ function addLayer(entry, root) {
     for (const g of list) {
       const mesh = new THREE.Mesh(g, material);
       mesh.userData.orig = material;
-      mesh.userData.floor = floor;
       mesh.matrixAutoUpdate = false;
       group.add(mesh);
       meshes.push(mesh);
@@ -266,7 +261,7 @@ function refreshMaterials() {
     for (const mesh of meshes) {
       const orig = mesh.userData.orig;
       if (entry.id === 'guides') { mesh.material = orig; continue; }
-      mesh.material = state.shading === 'solid' ? solidMaterial(orig, mesh.userData.floor ? null : tint) : orig;
+      mesh.material = state.shading === 'solid' ? solidMaterial(orig, tint) : orig;
     }
   }
   scene.environmentIntensity = state.shading === 'solid' ? ENV.solid : ENV.material;
