@@ -1,6 +1,6 @@
 {
-  "generated": "2026-11-04 14:52",
-  "version": 1793778731,
+  "generated": "2026-11-04 15:18",
+  "version": 1793780305,
   "source": "EXPday26_web.blend",
   "layers": [
     {
@@ -33,7 +33,7 @@
       "group": "school",
       "visible": true,
       "file": "models/sset.glb",
-      "bytes": 13949172,
+      "bytes": 13947008,
       "zone": 1
     },
     {
@@ -51,7 +51,7 @@
       "group": "school",
       "visible": true,
       "file": "models/tbs.glb",
-      "bytes": 11125564,
+      "bytes": 11128576,
       "zone": 3
     },
     {
