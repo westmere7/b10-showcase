@@ -7,6 +7,8 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
+import { MeshBVH, acceleratedRaycast } from 'three-mesh-bvh';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
@@ -132,6 +134,7 @@ async function boot() {
   refreshMaterials();
   applyVisibility();
   $('#loading').classList.add('done');
+  warmUpBlocks();
   if (location.hash) applyHash();
   try { if (!localStorage.getItem('b10-help-seen')) { $('#help').showModal(); localStorage.setItem('b10-help-seen', '1'); } } catch { /* storage blocked */ }
 }
@@ -180,10 +183,13 @@ function addLayer(entry, root) {
       const mesh = new THREE.Mesh(g, material);
       mesh.userData.orig = material;
       mesh.matrixAutoUpdate = false;
-      if (blockOf) {                                  // triangle range -> block, in merge order
-        const ranges = []; let start = 0;
-        for (let i = from; i < to; i++) { const n = tris(geos[i]); ranges.push([start, start + n, blockOf(parts[i])]); start += n; }
-        mesh.userData.ranges = ranges;
+      if (blockOf) {                                  // which triangles of this mesh belong to which block
+        let start = 0;
+        for (let i = from; i < to; i++) {
+          const n = tris(geos[i]), id = blockOf(parts[i]);
+          (blocks[id].pieces ||= []).push({ mesh, start, end: start + n });
+          start += n;
+        }
       }
       group.add(mesh);
       meshes.push(mesh);
@@ -570,7 +576,7 @@ function zoneAt(clientX, clientY) {
 function setHoverZone(id) {
   if (id === hoverZone) return;
   hoverZone = id;
-  stage.classList.toggle('zone-hover', !!id);
+  stage.classList.toggle('zone-hover', !!(hoverZone || hoverBlock));
   for (const m of layers.guides?.meshes ?? []) {
     if (m.userData.fill) m.material.opacity = m.userData.zoneId === id ? Math.min(0.65, m.userData.baseOpacity * 2.2) : m.userData.baseOpacity;
   }
@@ -580,12 +586,16 @@ canvas.addEventListener('pointerdown', (e) => {
   if (!state.walking && e.button === 0) downAt = { x: e.clientX, y: e.clientY, t: performance.now() };
 });
 canvas.addEventListener('pointermove', (e) => {
-  if (state.walking || state.tour || state.fly || e.buttons) { setHoverZone(null); return; }
+  if (state.walking || state.tour || state.fly || e.buttons) { setHoverZone(null); setHoverBlock(null); return; }
   if (e.pointerType !== 'mouse' || hoverPending) return;
   hoverPending = true;
-  requestAnimationFrame(() => { hoverPending = false; setHoverZone(zoneAt(e.clientX, e.clientY)); });
+  requestAnimationFrame(() => {
+    hoverPending = false;
+    setHoverZone(zoneAt(e.clientX, e.clientY));
+    setHoverBlock(blockAt(e.clientX, e.clientY, { readyOnly: true })?.block || null);
+  });
 });
-canvas.addEventListener('pointerleave', () => setHoverZone(null));
+canvas.addEventListener('pointerleave', () => { setHoverZone(null); setHoverBlock(null); });
 canvas.addEventListener('pointerup', (e) => {
   if (state.walking || !downAt) return;
   const d = downAt; downAt = null;
@@ -602,26 +612,132 @@ canvas.addEventListener('dblclick', (e) => {        // double-click: straight to
   if (blk) focusBlock(blk);
 });
 
-// ---- per-block click-to-focus
-function blockAt(clientX, clientY) {
+// ---- per-stand picking, hover outline and click-to-focus
+// Picking tests the ray against each stand's bounding box first (cheap), then only against the
+// real triangles of the few stands the ray passes through, nearest first.
+function blockGeometry(blk) {                          // a stand's own triangles, extracted on demand
+  if (blk.geo) return blk.geo;
+  let n = 0;
+  for (const p of blk.pieces) n += (p.end - p.start) * 9;
+  const out = new Float32Array(n); let o = 0;
+  for (const { mesh, start, end } of blk.pieces) {
+    const pos = mesh.geometry.attributes.position, idx = mesh.geometry.index;
+    for (let t = start; t < end; t++) {
+      for (let k = 0; k < 3; k++) {
+        const vi = idx ? idx.getX(t * 3 + k) : t * 3 + k;
+        out[o++] = pos.getX(vi); out[o++] = pos.getY(vi); out[o++] = pos.getZ(vi);
+      }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(out, 3));
+  g.computeBoundingSphere();
+  g.boundsTree = new MeshBVH(g);                       // spatial index: ray tests in well under 1 ms
+  blk.geo = g;
+  return g;
+}
+// prepare every stand's pick data (triangles + BVH) a few at a time after loading, so the
+// first hover on a heavy stand doesn't stutter
+function warmUpBlocks() {
+  const all = Object.values(layers).filter((l) => l.entry.zone).flatMap((l) => l.blocks.filter((b) => b.pieces));
+  const queue = all.map((b) => () => blockGeometry(b));
+  const step = (deadline) => {
+    const until = performance.now() + 8;
+    while (queue.length && (deadline?.timeRemaining ? deadline.timeRemaining() > 2 : performance.now() < until)) queue.shift()();
+    if (queue.length) schedule();
+  };
+  const schedule = () => (window.requestIdleCallback ? requestIdleCallback(step, { timeout: 500 }) : setTimeout(step, 30));
+  schedule();
+}
+const pickMesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+pickMesh.updateMatrixWorld();
+pickMesh.raycast = acceleratedRaycast;                 // uses each stand's BVH
+raycaster.firstHitOnly = true;
+const _hitPt = new THREE.Vector3();
+function blockAt(clientX, clientY, { readyOnly = false } = {}) {   // readyOnly: hover never waits on prep
   const r = canvas.getBoundingClientRect();
   raycaster.setFromCamera(new THREE.Vector2(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1), camera);
-  const targets = Object.values(layers).filter((l) => l.entry.zone && l.group.visible).flatMap((l) => l.meshes);
-  const hit = raycaster.intersectObjects(targets, false)[0];
-  if (!hit || hit.faceIndex == null) return null;
-  const ranges = hit.object.userData.ranges;
-  if (!ranges) return null;
-  let lo = 0, hi = ranges.length - 1;                  // binary search the triangle -> block table
-  while (lo < hi) { const mid = (lo + hi) >> 1; if (hit.faceIndex >= ranges[mid][1]) lo = mid + 1; else hi = mid; }
-  const layer = Object.values(layers).find((l) => l.meshes.includes(hit.object));
-  const block = layer.blocks[ranges[lo][2]];
-  return block ? { ...block, zone: layer.entry.zone } : null;
+  const cands = [];
+  for (const l of Object.values(layers)) {
+    if (!l.entry.zone || !l.group.visible) continue;
+    for (const b of l.blocks) {
+      if (b.pieces && (!readyOnly || b.geo) && raycaster.ray.intersectBox(b.box, _hitPt)) cands.push({ b, zone: l.entry.zone, d: _hitPt.distanceTo(raycaster.ray.origin) });
+    }
+  }
+  cands.sort((a, c) => a.d - c.d);
+  let best = null;
+  for (const c of cands) {
+    if (best && c.d > best.dist) break;                // this box starts beyond the best hit: done
+    pickMesh.geometry = blockGeometry(c.b);
+    const h = raycaster.intersectObject(pickMesh, false)[0];
+    if (h && (!best || h.distance < best.dist)) best = { block: c.b, zone: c.zone, dist: h.distance };
+  }
+  return best;
 }
-let focusFlash = null;
-function focusBlock(blk) {
+
+// hover: outline the stand's silhouette in RMIT red. Screen-space, like Blender's selection
+// outline: draw the stand flat white into a mask, then one full-screen pass paints the pixels
+// just outside the mask. Cost doesn't depend on how detailed the stand is.
+const OUTLINE_PX = 2.5;
+const maskRT = new THREE.WebGLRenderTarget(1, 1);
+const maskScene = new THREE.Scene();
+const maskMesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
+maskMesh.frustumCulled = false;
+maskScene.add(maskMesh);
+const outlineQuad = new FullScreenQuad(new THREE.ShaderMaterial({
+  uniforms: { tMask: { value: maskRT.texture }, texel: { value: new THREE.Vector2() }, radius: { value: 2.5 }, color: { value: new THREE.Color(0xE60028) } },
+  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: `
+    uniform sampler2D tMask; uniform vec2 texel; uniform float radius; uniform vec3 color; varying vec2 vUv;
+    void main() {
+      float inside = texture2D(tMask, vUv).r;
+      float near = 0.0;
+      for (int i = 0; i < 16; i++) {
+        float a = float(i) * 0.3926991;
+        near = max(near, texture2D(tMask, vUv + vec2(cos(a), sin(a)) * texel * radius).r);
+        near = max(near, texture2D(tMask, vUv + vec2(cos(a), sin(a)) * texel * radius * 0.5).r);
+      }
+      float edge = near * (1.0 - inside);
+      if (edge < 0.02) discard;
+      gl_FragColor = vec4(color, edge);
+      #include <colorspace_fragment>
+    }`,
+  transparent: true, depthTest: false, depthWrite: false,
+}));
+function sizeOutline() {
+  const s = renderer.getDrawingBufferSize(new THREE.Vector2());
+  maskRT.setSize(s.x, s.y);
+  outlineQuad.material.uniforms.texel.value.set(1 / s.x, 1 / s.y);
+  outlineQuad.material.uniforms.radius.value = OUTLINE_PX * renderer.getPixelRatio();
+}
+new ResizeObserver(sizeOutline).observe(stage);
+sizeOutline();
+function renderOutline() {
+  if (!hoverBlock?.geo) return;
+  maskMesh.geometry = hoverBlock.geo;
+  const clear = renderer.getClearColor(new THREE.Color()), alpha = renderer.getClearAlpha(), auto = renderer.autoClear;
+  renderer.setRenderTarget(maskRT);
+  renderer.setClearColor(0x000000, 0);
+  renderer.clear();
+  renderer.render(maskScene, camera);
+  renderer.setRenderTarget(null);
+  renderer.setClearColor(clear, alpha);
+  renderer.autoClear = false;
+  outlineQuad.render(renderer);
+  renderer.autoClear = auto;
+}
+let hoverBlock = null;
+function setHoverBlock(blk) {
+  if (blk === hoverBlock) return;
+  hoverBlock = blk;
+  stage.classList.toggle('zone-hover', !!(hoverZone || hoverBlock));
+}
+function focusBlock(sel) {
+  const blk = sel.block;
   stopTour();
   closePopovers();
   setActivePreset(null);
+  setHoverBlock(null);
   const centre = blk.box.getCenter(V3());
   const size = blk.box.getSize(V3());
   const span = Math.max(size.x, size.z, size.y * 1.4, 1.2);
@@ -630,19 +746,6 @@ function focusBlock(blk) {
   const az = THREE.MathUtils.radToDeg(Math.atan2(off.x, off.z));
   const target = centre.clone().setY(Math.max(floorY + 0.6, centre.y));
   goTo(orbitPose(target, span * 1.6, 32, az));
-  // flash an outline in the school's colour
-  if (focusFlash) { scene.remove(focusFlash.helper); focusFlash.helper.geometry.dispose(); }
-  const helper = new THREE.Box3Helper(blk.box.clone().expandByScalar(0.08), new THREE.Color(zones[blk.zone]?.colour || '#E60028'));
-  helper.material.transparent = true; helper.material.depthTest = false; helper.renderOrder = 20;
-  scene.add(helper);
-  focusFlash = { helper, t: 0 };
-}
-function updateFocusFlash(dt) {
-  if (!focusFlash) return;
-  focusFlash.t += dt;
-  const k = focusFlash.t / 2.6;                          // visible ~2.6 s, fading out over the last second
-  focusFlash.helper.material.opacity = k < 0.6 ? 1 : Math.max(0, 1 - (k - 0.6) / 0.4);
-  if (k >= 1) { scene.remove(focusFlash.helper); focusFlash.helper.geometry.dispose(); focusFlash = null; }
 }
 
 // ---- wheel / trackpad (handled here instead of OrbitControls, which treats every
@@ -1063,7 +1166,6 @@ function clampOrbit() {
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1);
-  updateFocusFlash(dt);
   if (state.tour) updateTour(dt);
   else if (state.fly) {
     const f = state.fly;
@@ -1076,9 +1178,10 @@ renderer.setAnimationLoop(() => {
   } else if (state.walking) updateWalk(dt);
   else { controls.update(); clampOrbit(); }
   renderer.render(scene, camera);
+  renderOutline();
   labelRenderer.render(scene, camera);
 });
 controls.addEventListener('start', () => { stopTour(); state.fly = null; setActivePreset(null); closePopovers(); });
 
-if (new URLSearchParams(location.search).has('debug')) window.b10 = { camera, controls, layers, zones, labelObjs, state, blockAt, focusBlock, go };
+if (new URLSearchParams(location.search).has('debug')) window.b10 = { camera, controls, layers, zones, labelObjs, state, blockAt, focusBlock, go, setHoverBlock, scene, renderer, renderOutline };
 boot();
