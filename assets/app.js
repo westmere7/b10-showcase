@@ -148,6 +148,7 @@ function addLayer(entry, root) {
   const buckets = new Map();
   root.traverse((o) => {
     if (!o.isMesh) return;
+    o.material.side = THREE.DoubleSide;   // SketchUp-style models have inward-facing faces; show both sides
     const g = o.geometry;
     const sig = Object.keys(g.attributes).sort()
       .map((k) => `${k}:${g.attributes[k].itemSize}:${g.attributes[k].normalized}:${g.attributes[k].array.constructor.name}`)
@@ -291,8 +292,8 @@ function buildLabels() {
     const el = document.createElement('div');
     el.className = 'zone-label';
     el.style.setProperty('--zc', z.colour);
-    el.innerHTML = `<span class="num">${z.id}</span><span>${z.short}</span><span class="full">${z.name}</span>`;
-    el.title = `${z.name}: click to view`;
+    el.innerHTML = `<span class="num">${z.id}</span><span>${z.short}</span>`;
+    el.title = `${z.short}: click to view`;
     el.addEventListener('pointerdown', (e) => e.stopPropagation());
     el.addEventListener('click', (e) => { e.stopPropagation(); go(`zone${z.id}`); });
     const obj = new CSS2DObject(el);
@@ -674,7 +675,7 @@ function schoolSegments(id, sweep, dur) {
   const z = zones[id];
   const size = Math.max(z.box.max.x - z.box.min.x, z.box.max.z - z.box.min.z);
   const c = z.centre.clone().setY(floorY + 0.8);
-  const seg = orbitSeg(c, Math.max(9, size * 0.62), Math.max(6, size * 0.38), 0, sweep, dur, `${z.id} · ${z.short}`, z.name);
+  const seg = orbitSeg(c, Math.max(9, size * 0.62), Math.max(6, size * 0.38), 0, sweep, dur, `${z.id} · ${z.short}`, 'School tour');
   return [{ type: 'fly', to: orbitStart(seg), dur: 2.0, title: seg.title, sub: seg.sub }, seg];
 }
 const tours = {
@@ -787,7 +788,7 @@ function buildUI() {
   const presets = [
     { id: 'overview', label: 'Overview', ico: 'home', tip: 'Overview of the hall (1)' },
     { id: 'top', label: 'Top', ico: 'top', tip: 'Top-down floor plan (2)' },
-    ...man.zones.map((z, i) => ({ id: `zone${z.id}`, label: z.short, zone: z, tip: `${z.name} (${i + 3})` })),
+    ...man.zones.map((z, i) => ({ id: `zone${z.id}`, label: z.short, zone: z, tip: `${z.short} (${i + 3})` })),
     { id: 'entrance', label: 'Entrance', ico: 'door', tip: 'Stand at the entrance in walk mode' },
   ];
   const box = $('#presets');
@@ -808,7 +809,7 @@ function buildUI() {
   const items = [
     { id: 'hall', label: 'Full hall orbit', sub: 'One slow lap around the whole showcase', colour: 'var(--rmit-red)' },
     { id: 'schools', label: 'All schools', sub: 'SSET → SCD → TBS', colour: 'var(--rmit-navy)' },
-    ...man.zones.map((z) => ({ id: `zone${z.id}`, label: `${z.short} tour`, sub: z.name, colour: z.colour })),
+    ...man.zones.map((z) => ({ id: `zone${z.id}`, label: `${z.short} tour`, sub: 'One lap around the zone', colour: z.colour })),
   ];
   for (const it of items) {
     const b = document.createElement('button');
@@ -840,7 +841,7 @@ function buildUI() {
       const z = l.zone ? man.zones.find((x) => x.id === l.zone) : null;
       const row = document.createElement('label');
       row.className = 'row';
-      row.innerHTML = `<span>${z ? `<span class="swatch" style="background:${z.colour}"></span><b>${z.short}</b> <small>${z.name}</small>` : l.label}</span>`
+      row.innerHTML = `<span>${z ? `<span class="swatch" style="background:${z.colour}"></span><b>${z.short}</b>` : l.label}</span>`
         + `<input type="checkbox" class="switch" data-layer="${l.id}" ${userVisible[l.id] !== false ? 'checked' : ''}>`;
       row.querySelector('input').addEventListener('change', (e) => { userVisible[l.id] = e.target.checked; applyVisibility(); });
       list.appendChild(row);

@@ -40,7 +40,6 @@ kbd {
 .zone-label:hover, .zone-label.hot { transform: translateY(-2px); box-shadow: 0 0 0 2px var(--zc), var(--shadow); }
 #stage.zone-hover canvas { cursor: pointer; }
 .zone-label .num { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; background: var(--zc, #888); color: #fff; font-size: 12px; }
-.zone-label .full { font-weight: 400; color: var(--ink-2); font-size: 12px; }
 .labels.hide-labels .zone-label { display: none; }
 
 /* ---------- floating pills ---------- */
@@ -185,7 +184,6 @@ input.switch:focus-visible { outline: 2px solid var(--rmit-red); outline-offset:
   .rail .tool { width: 48px; height: 46px; }
   .sep.h { width: 1px; height: auto; margin: 6px 4px; }
   .navbar { bottom: 78px; }
-  .zone-label .full { display: none; }
   [data-tip]:hover::after { display: none; }
   .pop { left: 12px !important; right: 12px; width: auto; }
 }
