@@ -159,8 +159,9 @@ async function boot() {
   const firstBytes = first.reduce((s, l) => s + l.bytes, 0);
   const got = {};
   const bar = () => {
-    const n = first.reduce((s, l) => s + (got[l.id] || 0), 0);
-    $('#load-progress').style.width = `${Math.min(100, (n / firstBytes) * 100).toFixed(1)}%`;
+    const pct = Math.min(100, (first.reduce((s, l) => s + (got[l.id] || 0), 0) / firstBytes) * 100);
+    $('#load-progress').style.width = `${pct.toFixed(1)}%`;
+    $('#load-pct').textContent = `${Math.floor(pct)}%`;
   };
   await Promise.all(first.map((entry) => loadLayer(entry, (f) => { got[entry.id] = f * entry.bytes; bar(); })
     .then((ok) => ok && prepareLayer(layers[entry.id]))));
@@ -170,13 +171,41 @@ async function boot() {
   applyVisibility();
   renderer.render(scene, camera);   // first frame (incl. the shadow map) while the loading screen is still up
   state.loading = false;
+  clearInterval(tipTimer);
   $('#loading').classList.add('done');
+  setTimeout(() => { $('#loading').hidden = true; }, 1200);   // stop its animations once it's gone
   if (location.hash) applyHash();
   try { if (!localStorage.getItem('b10-help-seen')) { $('#help').showModal(); localStorage.setItem('b10-help-seen', '1'); } } catch { /* storage blocked */ }
   streamLayers(rest);
 }
 
 const FIRST_LAYERS = new Set(['building', 'guides']);
+
+// Tips that cycle on the loading screen, so the wait teaches the controls.
+const LOAD_TIPS = matchMedia('(pointer: coarse)').matches ? [
+  '<b>Tap any stand</b> to fly straight to it.',
+  'Tap the <b>walk</b> button to explore the hall at eye level.',
+  'Tap <b>Tour</b> for a guided tour of every school.',
+  'Tap a school’s <b>coloured floor</b> to jump to its zone.',
+  '<b>Pinch</b> to move closer, <b>two fingers</b> to drag the view.',
+  'Use <b>Tint by school</b> to see who is where at a glance.',
+] : [
+  '<b>Click any stand</b> to fly straight to it.',
+  'Press <b>V</b> to walk the hall at eye level.',
+  'Press <b>T</b> for a guided tour of every school.',
+  'Click a school’s <b>coloured floor</b> to jump to its zone.',
+  'Press <b>L</b> to switch the sun shadows on or off.',
+  'Use <b>Tint by school</b> to see who is where at a glance.',
+  'Keys <b>1–5</b> jump between views.',
+];
+let tipIdx = Math.floor(Math.random() * LOAD_TIPS.length);
+const showTip = () => {
+  const el = $('#load-tip');
+  el.classList.add('out');
+  setTimeout(() => { el.innerHTML = LOAD_TIPS[tipIdx++ % LOAD_TIPS.length]; el.classList.remove('out'); }, 500);
+};
+showTip();
+const tipTimer = setInterval(showTip, 4500);
 
 function loadLayer(entry, onProgress) {
   return new Promise((resolve) => {
@@ -250,6 +279,7 @@ async function prepareLayer(l) {
 }
 
 function fail(msg) {
+  clearInterval(tipTimer);
   $('#loading').classList.add('error');
   $('.loading-title').textContent = 'Something went wrong';
   $('#load-detail').textContent = msg;

@@ -108,12 +108,24 @@
   <div id="crosshair" class="crosshair" hidden></div>
 
   <div id="loading" class="loading" role="status" aria-live="polite">
+    <div class="loading-grid" aria-hidden="true"></div>
+    <!-- the Experience Day "X" mark, its two halves sliding together -->
+    <svg class="loading-x" viewBox="0 0 599 649" aria-hidden="true">
+      <path class="xr" d="M409.209 204.918L413.312 209.243V215.507L414.133 432.665V438.929L410.166 443.403L311 551.385L400.455 648.927H598.787V432.814L499.621 324.683L598.787 216.551V0.289062H400.455L311 97.8309L409.209 204.918Z"/>
+      <path class="xl" d="M395.707 215.218L198.332 0H0V216.262L99.166 324.394L0 432.525V648.638H198.332L396.664 432.525L395.707 215.218Z"/>
+    </svg>
     <div class="loading-card">
-      <img src="assets/rmit-logo.svg" alt="RMIT University" class="loading-logo">
-      <div class="loading-title">Loading B10 Showcase…</div>
-      <div class="bar"><div id="load-progress"></div></div>
-      <div class="loading-detail" id="load-detail">Preparing</div>
+      <img src="assets/expday-lockup.png" alt="Experience Day 2026" class="loading-lockup" width="1002" height="372">
+      <div class="loading-title">B10 Showcase</div>
+      <div class="loading-sub">Explore the hall in 3D · SSET · SCD · TBS</div>
+      <div class="loading-meter">
+        <div class="bar"><div id="load-progress"></div></div>
+        <span class="loading-pct" id="load-pct">0%</span>
+      </div>
+      <div class="loading-detail" id="load-detail">Building the hall</div>
+      <p class="loading-tip" id="load-tip"></p>
     </div>
+    <img src="assets/rmit-logo-white.svg" alt="RMIT University" class="loading-rmit">
   </div>
 
   <dialog id="help" class="help">
