@@ -50,4 +50,4 @@ so visitors get the new models straight away instead of stale cached ones.
 - **Walk mode:** 1.7 m eye height. Click the floor to walk there, drag to look, use WASD or the arrow keys to move, and press Esc to exit.
 - **Views:** Overview, Top, one per school, and Entrance (starts walk mode).
 - **Tours:** full hall orbit, all schools, or one school.
-- **Settings:** Material or Solid shading, a per-school tint with colour pickers, and layer toggles for each school, the zone guides, the hall structure, the grandstands and the roof.
+- **Settings:** Material or Solid shading, sun shadows on or off (the sun button, or <kbd>L</kbd>), a per-school tint with colour pickers, and layer toggles for each school, the zone guides, the hall structure, the grandstands and the roof.

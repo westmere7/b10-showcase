@@ -49,6 +49,40 @@ const fill = new THREE.DirectionalLight(0xdfe6ff, 0.35);
 fill.position.set(25, 18, -30);
 scene.add(fill);
 
+// Sun shadows (toggle with the sun button). The plan never moves, so the shadow map is drawn once and redrawn
+// only when a layer is shown or hidden: each frame just reads it back, which costs very little.
+const SUN_DIR = V3(-22, 46, 28).normalize();     // same side as before, a bit higher (~52°) for shorter shadows
+const SHADOW_STRENGTH = 0.8;                       // 1 = sun fully blocked; lower keeps shadowed sides readable
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.autoUpdate = false;
+sun.castShadow = true;
+sun.shadow.intensity = SHADOW_STRENGTH;
+sun.shadow.mapSize.setScalar(!matchMedia('(pointer: coarse)').matches && renderer.capabilities.maxTextureSize >= 8192 ? 4096 : 2048);
+sun.shadow.bias = -0.0005;
+sun.shadow.normalBias = 0.03;
+scene.add(sun.target);
+const redrawShadows = () => { renderer.shadowMap.needsUpdate = true; };
+
+// aim the sun at the hall and fit its shadow camera tightly around it (sharper shadows)
+function fitShadow() {
+  const c = hallBox.getCenter(V3());
+  sun.target.position.copy(c);
+  sun.position.copy(c).addScaledVector(SUN_DIR, 60);
+  const cam = sun.shadow.camera;
+  cam.position.copy(sun.position);
+  cam.lookAt(c);
+  cam.updateMatrixWorld();
+  const toLight = cam.matrixWorld.clone().invert(), b = new THREE.Box3(), p = V3();
+  for (let i = 0; i < 8; i++) {
+    p.set(i & 1 ? hallBox.max.x : hallBox.min.x, i & 2 ? hallBox.max.y : hallBox.min.y, i & 4 ? hallBox.max.z : hallBox.min.z);
+    b.expandByPoint(p.applyMatrix4(toLight));
+  }
+  Object.assign(cam, { left: b.min.x, right: b.max.x, bottom: b.min.y, top: b.max.y, near: -b.max.z - 1, far: -b.min.z + 1 });
+  cam.updateProjectionMatrix();
+  redrawShadows();
+}
+
 const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 800);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
@@ -75,6 +109,7 @@ resize();
 const state = {
   shading: 'material',
   tint: { on: false, strength: 0.6, colours: {} },
+  shadows: (() => { try { return localStorage.getItem('b10-shadows') !== '0'; } catch { return true; } })(),
   walking: false,
   tour: null,
   fly: null,
@@ -108,6 +143,7 @@ async function boot() {
   Object.values(zones).forEach((z) => walkBox.union(z.box));
   walkBox.expandByVector(V3(0.6, 0, 0.6));
   setCameraLimits();
+  fitShadow();
 
   for (const l of man.layers) userVisible[l.id] = l.visible !== false;
 
@@ -183,6 +219,10 @@ function addLayer(entry, root) {
       const mesh = new THREE.Mesh(g, material);
       mesh.userData.orig = material;
       mesh.matrixAutoUpdate = false;
+      // exhibits and seating cast shadows; the hall shell only receives them (its tall walls
+      // would otherwise throw half the floor into shade) and the roof does neither
+      mesh.castShadow = Boolean(entry.zone) || entry.id === 'seating';
+      mesh.receiveShadow = entry.id !== ROOF;
       if (blockOf) {                                  // which triangles of this mesh belong to which block
         let start = 0;
         for (let i = from; i < to; i++) {
@@ -257,6 +297,7 @@ function applyVisibility() {
     const l = man.layers.find((x) => String(x.zone) === String(zid));
     obj.visible = !l || userVisible[l.id] !== false;
   }
+  redrawShadows();
 }
 
 // ------------------------------------------------------------------ materials: solid / tint
@@ -299,6 +340,20 @@ function refreshMaterials() {
     }
   }
   scene.environmentIntensity = state.shading === 'solid' ? ENV.solid : ENV.material;
+  applyShadows();
+}
+
+// Shadows on/off (both shading modes). Fading the shadow out instead of switching shadow casting
+// off avoids recompiling every material, so the toggle is instant.
+function applyShadows() {
+  sun.shadow.intensity = state.shadows ? SHADOW_STRENGTH : 0;
+  const b = $('#btn-shadows');
+  if (b) { b.classList.toggle('active', state.shadows); b.setAttribute('aria-pressed', String(state.shadows)); }
+}
+function setShadows(on) {
+  state.shadows = on;
+  try { localStorage.setItem('b10-shadows', on ? '1' : '0'); } catch { /* storage blocked */ }
+  applyShadows();
 }
 
 function setShading(mode) {
@@ -823,6 +878,7 @@ window.addEventListener('keydown', (e) => {
   if (!state.walking && (e.key === '+' || e.key === '=')) flyForward(1);
   if (!state.walking && (e.key === '-' || e.key === '_')) flyForward(-1);
   if (e.code === 'KeyV') toggleWalk();
+  if (e.code === 'KeyL') setShadows(!state.shadows);
   if (e.code === 'KeyT' && !state.walking) startTour('hall');
 });
 window.addEventListener('keyup', (e) => walk.keys.delete(e.code));
@@ -1013,6 +1069,8 @@ function buildUI() {
   $('#btn-tint').addEventListener('click', () => togglePopover(popovers[1]));
   $$('[data-close]').forEach((b) => b.addEventListener('click', closePopovers));
   $('#btn-help').addEventListener('click', () => { closePopovers(); $('#help').showModal(); });
+  $('#btn-shadows').addEventListener('click', () => setShadows(!state.shadows));
+  applyShadows();
   $$('[data-shading]').forEach((b) => b.addEventListener('click', () => setShading(b.dataset.shading)));
 
   // show / hide: schools + guides only (structure is managed automatically)
