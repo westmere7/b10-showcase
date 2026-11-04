@@ -591,8 +591,9 @@ canvas.addEventListener('pointermove', (e) => {
   hoverPending = true;
   requestAnimationFrame(() => {
     hoverPending = false;
-    setHoverZone(zoneAt(e.clientX, e.clientY));
-    setHoverBlock(blockAt(e.clientX, e.clientY, { readyOnly: true })?.block || null);
+    const blk = blockAt(e.clientX, e.clientY, { readyOnly: true })?.block || null;
+    setHoverBlock(blk);                                   // over a stand: outline the stand
+    setHoverZone(blk ? null : zoneAt(e.clientX, e.clientY));   // over open floor: highlight the zone
   });
 });
 canvas.addEventListener('pointerleave', () => { setHoverZone(null); setHoverBlock(null); });
@@ -600,16 +601,11 @@ canvas.addEventListener('pointerup', (e) => {
   if (state.walking || !downAt) return;
   const d = downAt; downAt = null;
   if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 5 || performance.now() - d.t > 450) return;   // was a drag
-  // from afar, a click picks the school; once you're looking at a school, it picks one stand
+  // a stand under the cursor wins; open zone floor takes you to that school
+  const blk = blockAt(e.clientX, e.clientY);
+  if (blk) { focusBlock(blk); return; }
   const id = zoneAt(e.clientX, e.clientY);
-  if (id) { setHoverZone(null); go(`zone${id}`); return; }
-  const blk = blockAt(e.clientX, e.clientY);
-  if (blk) focusBlock(blk);
-});
-canvas.addEventListener('dblclick', (e) => {        // double-click: straight to that stand, from any view
-  if (state.walking || state.tour) return;
-  const blk = blockAt(e.clientX, e.clientY);
-  if (blk) focusBlock(blk);
+  if (id) { setHoverZone(null); go(`zone${id}`); }
 });
 
 // ---- per-stand picking, hover outline and click-to-focus
@@ -675,31 +671,37 @@ function blockAt(clientX, clientY, { readyOnly = false } = {}) {   // readyOnly:
   return best;
 }
 
-// hover: outline the stand's silhouette in RMIT red. Screen-space, like Blender's selection
-// outline: draw the stand flat white into a mask, then one full-screen pass paints the pixels
-// just outside the mask. Cost doesn't depend on how detailed the stand is.
-const OUTLINE_PX = 2.5;
+// hover: a subtle outline around the stand's silhouette - a thin white line with a faint dark
+// edge outside it, so it reads on light and dark surfaces alike. Screen-space, like Blender's
+// selection outline: draw the stand flat into a mask, then one full-screen pass paints the
+// pixels just outside it. Cost doesn't depend on how detailed the stand is.
+const OUTLINE_PX = 1.5;
 const maskRT = new THREE.WebGLRenderTarget(1, 1);
 const maskScene = new THREE.Scene();
 const maskMesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
 maskMesh.frustumCulled = false;
 maskScene.add(maskMesh);
 const outlineQuad = new FullScreenQuad(new THREE.ShaderMaterial({
-  uniforms: { tMask: { value: maskRT.texture }, texel: { value: new THREE.Vector2() }, radius: { value: 2.5 }, color: { value: new THREE.Color(0xE60028) } },
+  uniforms: { tMask: { value: maskRT.texture }, texel: { value: new THREE.Vector2() }, radius: { value: 1.5 } },
   vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
   fragmentShader: `
-    uniform sampler2D tMask; uniform vec2 texel; uniform float radius; uniform vec3 color; varying vec2 vUv;
+    uniform sampler2D tMask; uniform vec2 texel; uniform float radius; varying vec2 vUv;
+    float ring(float r) {                       // is there mask within r pixels?
+      float m = 0.0;
+      for (int i = 0; i < 12; i++) {
+        float a = float(i) * 0.5235988;
+        m = max(m, texture2D(tMask, vUv + vec2(cos(a), sin(a)) * texel * r).r);
+      }
+      return m;
+    }
     void main() {
       float inside = texture2D(tMask, vUv).r;
-      float near = 0.0;
-      for (int i = 0; i < 16; i++) {
-        float a = float(i) * 0.3926991;
-        near = max(near, texture2D(tMask, vUv + vec2(cos(a), sin(a)) * texel * radius).r);
-        near = max(near, texture2D(tMask, vUv + vec2(cos(a), sin(a)) * texel * radius * 0.5).r);
-      }
-      float edge = near * (1.0 - inside);
-      if (edge < 0.02) discard;
-      gl_FragColor = vec4(color, edge);
+      if (inside > 0.5) discard;
+      float line = max(ring(radius), ring(radius * 0.5));   // thin line hugging the silhouette
+      float halo = ring(radius * 2.2);                      // faint dark edge just outside it
+      if (line > 0.02) gl_FragColor = vec4(1.0, 1.0, 1.0, 0.85 * line);
+      else if (halo > 0.02) gl_FragColor = vec4(0.04, 0.04, 0.1, 0.22 * halo);
+      else discard;
       #include <colorspace_fragment>
     }`,
   transparent: true, depthTest: false, depthWrite: false,
