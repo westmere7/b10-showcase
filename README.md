@@ -45,7 +45,7 @@ so visitors get the new models straight away instead of stale cached ones.
 
 ## Controls
 
-- **Orbit:** left-drag rotates; middle- or right-drag (or two fingers) drags the view; the scroll wheel or a pinch moves forward and back along the view direction. The on-screen buttons do the same. Click a school's coloured zone to fly to it.
+- **Orbit:** left-drag rotates; middle- or right-drag (or two fingers) drags the view; the scroll wheel or a pinch moves forward and back along the view direction. The on-screen buttons do the same. Click a school's coloured zone to fly to it; once there, click any stand (or double-click it from anywhere) to focus on that stand.
 - **Mac trackpad:** click-drag rotates, a two-finger swipe drags the view, a pinch moves forward and back, and a two-finger twist rotates (Safari).
 - **Walk mode:** 1.7 m eye height. Click the floor to walk there, drag to look, use WASD or the arrow keys to move, and press Esc to exit.
 - **Views:** Overview, Top, one per school, and Entrance (starts walk mode).

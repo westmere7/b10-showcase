@@ -160,6 +160,11 @@ function addLayer(entry, root) {
   const group = new THREE.Group();
   group.name = entry.id;
   const meshes = [];
+  // School layers: remember which "block" (stand / exhibit) each part belongs to, so a click on
+  // the merged mesh can still be traced back to one stand. A block is the largest group of
+  // parts in the file's hierarchy that still fits within BLOCK_MAX metres.
+  const blocks = [];
+  const blockOf = entry.zone ? makeBlockFinder(root, blocks) : null;
   for (const { material, parts } of buckets.values()) {
     const geos = parts.map((o) => {
       const g = o.geometry.clone();
@@ -168,19 +173,25 @@ function addLayer(entry, root) {
       if (o.matrixWorld.determinant() < 0) flipWinding(g);
       return g;
     });
+    const tris = (g) => (g.index ? g.index.count : g.attributes.position.count) / 3;
     const merged = geos.length > 1 ? mergeGeometries(geos, false) : geos[0];
-    const list = merged ? [merged] : geos;
-    if (merged && geos.length > 1) geos.forEach((g) => g.dispose());
-    for (const g of list) {
+    const pieces = merged ? [{ g: merged, from: 0, to: parts.length }] : geos.map((g, i) => ({ g, from: i, to: i + 1 }));
+    for (const { g, from, to } of pieces) {
       const mesh = new THREE.Mesh(g, material);
       mesh.userData.orig = material;
       mesh.matrixAutoUpdate = false;
+      if (blockOf) {                                  // triangle range -> block, in merge order
+        const ranges = []; let start = 0;
+        for (let i = from; i < to; i++) { const n = tris(geos[i]); ranges.push([start, start + n, blockOf(parts[i])]); start += n; }
+        mesh.userData.ranges = ranges;
+      }
       group.add(mesh);
       meshes.push(mesh);
     }
+    if (merged && geos.length > 1) geos.forEach((g) => g.dispose());
   }
   scene.add(group);
-  layers[entry.id] = { entry, group, meshes };
+  layers[entry.id] = { entry, group, meshes, blocks };
   if (entry.zone) placeLabel(entry.zone);
   if (entry.id === 'guides') {
     // tag each guide mesh with its school (materials are named ZoneFill_<SHORT> / ZoneBorder_<SHORT>)
@@ -190,6 +201,22 @@ function addLayer(entry, root) {
     }
   }
   applyVisibility();
+}
+
+const BLOCK_MAX = 8;   // metres: anything bigger is a whole zone / row, not one stand
+function makeBlockFinder(root, blocks) {
+  const boxCache = new Map(), idOf = new Map();
+  const boxOf = (n) => {
+    if (!boxCache.has(n)) boxCache.set(n, new THREE.Box3().setFromObject(n));
+    return boxCache.get(n);
+  };
+  const fits = (n) => { const s = boxOf(n).getSize(V3()); return Math.max(s.x, s.y, s.z) <= BLOCK_MAX; };
+  return (part) => {
+    let node = part;
+    while (node.parent && node.parent !== root && fits(node.parent)) node = node.parent;
+    if (!idOf.has(node)) { idOf.set(node, blocks.length); blocks.push({ box: boxOf(node).clone(), name: node.name || '' }); }
+    return idOf.get(node);
+  };
 }
 
 function flipWinding(g) {
@@ -563,9 +590,60 @@ canvas.addEventListener('pointerup', (e) => {
   if (state.walking || !downAt) return;
   const d = downAt; downAt = null;
   if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 5 || performance.now() - d.t > 450) return;   // was a drag
+  // from afar, a click picks the school; once you're looking at a school, it picks one stand
   const id = zoneAt(e.clientX, e.clientY);
-  if (id) { setHoverZone(null); go(`zone${id}`); }
+  if (id) { setHoverZone(null); go(`zone${id}`); return; }
+  const blk = blockAt(e.clientX, e.clientY);
+  if (blk) focusBlock(blk);
 });
+canvas.addEventListener('dblclick', (e) => {        // double-click: straight to that stand, from any view
+  if (state.walking || state.tour) return;
+  const blk = blockAt(e.clientX, e.clientY);
+  if (blk) focusBlock(blk);
+});
+
+// ---- per-block click-to-focus
+function blockAt(clientX, clientY) {
+  const r = canvas.getBoundingClientRect();
+  raycaster.setFromCamera(new THREE.Vector2(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1), camera);
+  const targets = Object.values(layers).filter((l) => l.entry.zone && l.group.visible).flatMap((l) => l.meshes);
+  const hit = raycaster.intersectObjects(targets, false)[0];
+  if (!hit || hit.faceIndex == null) return null;
+  const ranges = hit.object.userData.ranges;
+  if (!ranges) return null;
+  let lo = 0, hi = ranges.length - 1;                  // binary search the triangle -> block table
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (hit.faceIndex >= ranges[mid][1]) lo = mid + 1; else hi = mid; }
+  const layer = Object.values(layers).find((l) => l.meshes.includes(hit.object));
+  const block = layer.blocks[ranges[lo][2]];
+  return block ? { ...block, zone: layer.entry.zone } : null;
+}
+let focusFlash = null;
+function focusBlock(blk) {
+  stopTour();
+  closePopovers();
+  setActivePreset(null);
+  const centre = blk.box.getCenter(V3());
+  const size = blk.box.getSize(V3());
+  const span = Math.max(size.x, size.z, size.y * 1.4, 1.2);
+  // keep looking from the current side, a little above the stand
+  const off = camera.position.clone().sub(centre);
+  const az = THREE.MathUtils.radToDeg(Math.atan2(off.x, off.z));
+  const target = centre.clone().setY(Math.max(floorY + 0.6, centre.y));
+  goTo(orbitPose(target, span * 1.6, 32, az));
+  // flash an outline in the school's colour
+  if (focusFlash) { scene.remove(focusFlash.helper); focusFlash.helper.geometry.dispose(); }
+  const helper = new THREE.Box3Helper(blk.box.clone().expandByScalar(0.08), new THREE.Color(zones[blk.zone]?.colour || '#E60028'));
+  helper.material.transparent = true; helper.material.depthTest = false; helper.renderOrder = 20;
+  scene.add(helper);
+  focusFlash = { helper, t: 0 };
+}
+function updateFocusFlash(dt) {
+  if (!focusFlash) return;
+  focusFlash.t += dt;
+  const k = focusFlash.t / 2.6;                          // visible ~2.6 s, fading out over the last second
+  focusFlash.helper.material.opacity = k < 0.6 ? 1 : Math.max(0, 1 - (k - 0.6) / 0.4);
+  if (k >= 1) { scene.remove(focusFlash.helper); focusFlash.helper.geometry.dispose(); focusFlash = null; }
+}
 
 // ---- wheel / trackpad (handled here instead of OrbitControls, which treats every
 // two-finger swipe as zoom). Orbit: mouse wheel and pinch zoom, two-finger swipe moves around,
@@ -985,6 +1063,7 @@ function clampOrbit() {
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1);
+  updateFocusFlash(dt);
   if (state.tour) updateTour(dt);
   else if (state.fly) {
     const f = state.fly;
@@ -1001,5 +1080,5 @@ renderer.setAnimationLoop(() => {
 });
 controls.addEventListener('start', () => { stopTour(); state.fly = null; setActivePreset(null); closePopovers(); });
 
-if (new URLSearchParams(location.search).has('debug')) window.b10 = { camera, controls, layers, zones, labelObjs, state };
+if (new URLSearchParams(location.search).has('debug')) window.b10 = { camera, controls, layers, zones, labelObjs, state, blockAt, focusBlock, go };
 boot();
