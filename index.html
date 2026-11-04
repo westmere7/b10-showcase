@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>B10 Showcase · RMIT Vietnam Experience Day 2026</title>
+  <meta name="description" content="Interactive 3D floor plan of the B10 sports hall showcase for RMIT Vietnam Experience Day 2026, covering SSET, SCD and TBS.">
+  <meta name="theme-color" content="#000054">
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <link rel="stylesheet" href="assets/style.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <!-- SVG icon sprite -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5M5.5 9.5V20h13V9.5" /></symbol>
+      <symbol id="i-top" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2" /><path d="M4 12h16M12 4v16" /></symbol>
+      <symbol id="i-door" viewBox="0 0 24 24"><path d="M6 20V4h9l3 2v14M3 20h18M13 12h.01" /></symbol>
+      <symbol id="i-walk" viewBox="0 0 24 24"><circle cx="13" cy="4.5" r="1.8" /><path d="m9 21 2.5-6 2.5 2v4M8 12l2-4.5 3 1 2.5 3.5 2.5 1M11.5 8.5 10 15" /></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5v14l12-7z" /></symbol>
+      <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 4 9 5-9 5-9-5zM3 14l9 5 9-5" /></symbol>
+      <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18c1.2 0 1.8-.8 1.8-1.7 0-1.3-1-1.6-1-2.8 0-1 .8-1.7 1.8-1.7H17a4 4 0 0 0 4-4C21 6.4 17 3 12 3Z" /><circle cx="7.5" cy="11" r="1" /><circle cx="10" cy="7" r="1" /><circle cx="15" cy="7.5" r="1" /></symbol>
+      <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5v.7M12 17h.01" /></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></symbol>
+      <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14" /></symbol>
+      <symbol id="i-rotl" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4" /></symbol>
+      <symbol id="i-rotr" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v4h-4" /></symbol>
+      <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" /></symbol>
+      <symbol id="i-up" viewBox="0 0 24 24"><path d="m6 14 6-6 6 6" /></symbol>
+      <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 10 6 6 6-6" /></symbol>
+      <symbol id="i-chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6" /></symbol>
+    </defs>
+  </svg>
+
+  <main id="stage" aria-label="3D view of the B10 hall"></main>
+
+  <!-- top-left: board name -->
+  <div class="pill board">
+    <img class="logo" src="assets/rmit-logo.svg" alt="RMIT University">
+    <div class="board-titles">
+      <div class="board-name">B10 Showcase</div>
+      <div class="board-sub">Experience Day 2026 · RMIT Vietnam</div>
+    </div>
+  </div>
+
+  <!-- top-right: actions -->
+  <div class="pill actions">
+    <div class="segmented" role="radiogroup" aria-label="Shading">
+      <button role="radio" aria-checked="true" data-shading="material">Material</button>
+      <button role="radio" aria-checked="false" data-shading="solid">Solid</button>
+    </div>
+    <span class="sep"></span>
+    <button class="tool" id="btn-layers" data-tip="Show / hide" data-tip-pos="below" aria-haspopup="dialog" aria-controls="pop-layers"><svg><use href="#i-layers"/></svg></button>
+    <button class="tool" id="btn-tint" data-tip="Tint by school" data-tip-pos="below" aria-haspopup="dialog" aria-controls="pop-tint"><svg><use href="#i-palette"/></svg></button>
+    <button class="tool" id="btn-help" data-tip="How to navigate" data-tip-pos="below"><svg><use href="#i-help"/></svg></button>
+  </div>
+
+  <!-- left: tool rail -->
+  <nav class="pill rail" aria-label="Views">
+    <div id="presets" class="rail-group"></div>
+    <span class="sep h"></span>
+    <button class="tool" id="btn-walk" data-tip="Walk mode · 1.7 m eye level (V)"><svg><use href="#i-walk"/></svg><span class="tool-label">Walk</span></button>
+    <button class="tool" id="btn-tour" data-tip="Guided tours (T)" aria-haspopup="menu" aria-expanded="false"><svg><use href="#i-play"/></svg><span class="tool-label">Tour</span></button>
+  </nav>
+
+  <!-- tour flyout -->
+  <div class="pop flyout" id="tour-menu" role="menu" hidden></div>
+
+  <!-- popovers -->
+  <section class="pop" id="pop-layers" hidden aria-label="Show and hide">
+    <header><h2>Show / hide</h2><button class="tool sm" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></header>
+    <div id="layer-list"></div>
+    <label class="row"><span>School labels</span><input type="checkbox" class="switch" id="opt-labels" checked></label>
+    <p class="updated" id="updated"></p>
+  </section>
+
+  <section class="pop" id="pop-tint" hidden aria-label="Tint by school">
+    <header><h2>Tint by school</h2><button class="tool sm" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></header>
+    <label class="row"><span>Tint models</span><input type="checkbox" class="switch" id="opt-tint"></label>
+    <p class="note" id="tint-note">Tint is shown in <b>Solid</b> mode. Turning it on switches to Solid.</p>
+    <div id="tint-colours" class="tint-list"></div>
+    <label class="row slider"><span>Strength</span><input type="range" id="opt-tint-strength" min="0.15" max="1" step="0.05" value="0.6"></label>
+  </section>
+
+  <!-- bottom-right: camera / walk controls -->
+  <div class="pill navbar" id="navpad" aria-label="Camera buttons"></div>
+
+  <!-- top-centre: tour / walk status -->
+  <div id="tourhud" class="pill hud dark" hidden>
+    <div class="hud-text"><strong id="tour-title"></strong><span id="tour-sub"></span></div>
+    <div class="tour-bar"><div id="tour-progress"></div></div>
+    <button class="hud-btn" id="tour-stop">Stop</button>
+  </div>
+  <div id="walkhint" class="pill hud" hidden></div>
+  <div id="crosshair" class="crosshair" hidden></div>
+
+  <div id="loading" class="loading" role="status" aria-live="polite">
+    <div class="loading-card">
+      <img src="assets/rmit-logo.svg" alt="RMIT University" class="loading-logo">
+      <div class="loading-title">Loading B10 Showcase…</div>
+      <div class="bar"><div id="load-progress"></div></div>
+      <div class="loading-detail" id="load-detail">Preparing</div>
+    </div>
+  </div>
+
+  <dialog id="help" class="help">
+    <header><h2>Getting around</h2></header>
+    <div class="help-grid">
+      <div>
+        <h3>Look around</h3>
+        <ul>
+          <li><b>Rotate:</b> drag with the left mouse button, or one finger</li>
+          <li><b>Drag the view:</b> middle or right mouse button (or <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+drag), or two fingers</li>
+          <li><b>Move forward / back:</b> scroll wheel, pinch, or <kbd>+</kbd> / <kbd>−</kbd></li>
+          <li><b>Go to a school:</b> click its coloured zone</li>
+          <li>Or use the buttons at the bottom right</li>
+        </ul>
+        <h3>Mac trackpad</h3>
+        <ul>
+          <li><b>Rotate:</b> click and drag (or twist two fingers in Safari)</li>
+          <li><b>Drag the view:</b> swipe with two fingers</li>
+          <li><b>Move forward / back:</b> pinch</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Walk mode (1.7 m eye level)</h3>
+        <ul>
+          <li><b>Look:</b> click the view once, then just move the mouse (touch: drag)</li>
+          <li><b>Walk to a spot:</b> click to walk to the crosshair (touch: tap the floor)</li>
+          <li><b>Move:</b> <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or the arrow keys; hold <kbd>Shift</kbd> to go faster. Trackpad: two-finger swipe up/down to walk</li>
+          <li><b>Exit:</b> <kbd>Esc</kbd> frees the mouse; press <kbd>Esc</kbd> again (or choose any view) to leave</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Shortcuts</h3>
+        <ul>
+          <li><kbd>1</kbd> Overview · <kbd>2</kbd> Top · <kbd>3</kbd> SSET · <kbd>4</kbd> SCD · <kbd>5</kbd> TBS</li>
+          <li><kbd>V</kbd> walk mode · <kbd>T</kbd> hall tour</li>
+          <li>Any click or key stops a tour</li>
+        </ul>
+      </div>
+    </div>
+    <form method="dialog"><button class="btn primary">Got it</button></form>
+  </dialog>
+
+  <noscript><p class="noscript">This 3D viewer needs JavaScript and a browser that supports WebGL.</p></noscript>
+  <script type="module" src="assets/app.js"></script>
+</body>
+</html>

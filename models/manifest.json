@@ -1,0 +1,144 @@
+{
+  "generated": "2026-11-04 14:52",
+  "version": 1793778731,
+  "source": "EXPday26_web.blend",
+  "layers": [
+    {
+      "id": "building",
+      "label": "Hall structure",
+      "group": "hall",
+      "visible": true,
+      "file": "models/building.glb",
+      "bytes": 1708840
+    },
+    {
+      "id": "seating",
+      "label": "Grandstands & seats",
+      "group": "hall",
+      "visible": true,
+      "file": "models/seating.glb",
+      "bytes": 5729216
+    },
+    {
+      "id": "roof",
+      "label": "Roof & top structure",
+      "group": "hall",
+      "visible": false,
+      "file": "models/roof.glb",
+      "bytes": 525780
+    },
+    {
+      "id": "sset",
+      "label": "SSET",
+      "group": "school",
+      "visible": true,
+      "file": "models/sset.glb",
+      "bytes": 13949172,
+      "zone": 1
+    },
+    {
+      "id": "scd",
+      "label": "SCD",
+      "group": "school",
+      "visible": true,
+      "file": "models/scd.glb",
+      "bytes": 2625308,
+      "zone": 2
+    },
+    {
+      "id": "tbs",
+      "label": "TBS",
+      "group": "school",
+      "visible": true,
+      "file": "models/tbs.glb",
+      "bytes": 11125564,
+      "zone": 3
+    },
+    {
+      "id": "guides",
+      "label": "Zone guides",
+      "group": "guides",
+      "visible": true,
+      "file": "models/guides.glb",
+      "bytes": 38520
+    }
+  ],
+  "zones": [
+    {
+      "id": 1,
+      "short": "SSET",
+      "name": "School of Science, Engineering & Technology",
+      "colour": "#458fdb",
+      "centre": [
+        -14.106,
+        0.167,
+        4.18
+      ],
+      "min": [
+        -20.402,
+        0.167,
+        -12.695
+      ],
+      "max": [
+        -7.834,
+        0.167,
+        15.429
+      ]
+    },
+    {
+      "id": 2,
+      "short": "SCD",
+      "name": "School of Communication & Design",
+      "colour": "#8f61eb",
+      "centre": [
+        0.024,
+        0.167,
+        -6.213
+      ],
+      "min": [
+        -11.003,
+        0.167,
+        -13.712
+      ],
+      "max": [
+        11.072,
+        0.167,
+        5.626
+      ]
+    },
+    {
+      "id": 3,
+      "short": "TBS",
+      "name": "The Business School",
+      "colour": "#61ad54",
+      "centre": [
+        14.169,
+        0.167,
+        4.186
+      ],
+      "min": [
+        7.903,
+        0.167,
+        -12.695
+      ],
+      "max": [
+        20.471,
+        0.167,
+        15.429
+      ]
+    }
+  ],
+  "hall": {
+    "min": [
+      -32.004,
+      0.0,
+      -31.605
+    ],
+    "max": [
+      39.231,
+      6.99,
+      17.812
+    ]
+  },
+  "floorY": 0.152
+}
