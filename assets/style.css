@@ -175,20 +175,12 @@ input.switch:focus-visible { outline: 2px solid var(--rmit-red); outline-offset:
 }
 @keyframes grid-drift { to { transform: translate(80px, 80px); } }
 
-/* giant X mark behind the card */
-.loading-x { position: absolute; width: min(78vmin, 640px); height: auto; opacity: .16; overflow: visible; }
-.loading-x path { fill: #fff; }
-.loading-x .xl { fill: var(--rmit-red); animation: x-in-l 1.6s cubic-bezier(.25, .1, .25, 1) both; }
-.loading-x .xr { animation: x-in-r 1.6s cubic-bezier(.25, .1, .25, 1) both; }
-@keyframes x-in-l { from { transform: translateX(-12%); opacity: 0; } }
-@keyframes x-in-r { from { transform: translateX(12%); opacity: 0; } }
 
 .loading-card { position: relative; width: min(440px, 88vw); text-align: center; transition: opacity .35s; }
-/* the lockup as a white-edged sticker that settles onto the screen */
+/* the Experience Day lockup (red band removed), settling onto the screen */
 .loading-lockup {
-  display: block; width: min(380px, 80vw); height: auto; margin: 0 auto;
-  filter: drop-shadow(2.5px 0 0 #fff) drop-shadow(-2.5px 0 0 #fff) drop-shadow(0 2.5px 0 #fff) drop-shadow(0 -2.5px 0 #fff)
-          drop-shadow(0 14px 24px rgba(0, 0, 20, .45));
+  display: block; width: min(400px, 82vw); height: auto; margin: 0 auto;
+  filter: drop-shadow(0 12px 22px rgba(0, 0, 20, .5));
   animation: settle .9s cubic-bezier(.25, .1, .25, 1) .15s both;
 }
 @keyframes settle { from { transform: scale(1.04); opacity: 0; } }
