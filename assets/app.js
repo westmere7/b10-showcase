@@ -151,22 +151,27 @@ async function boot() {
   buildUI();
   goTo(poses.overview(), 0);
 
-  // The hall shell and zone guides are small and load first, so the plan is on screen within
-  // seconds even on a slow phone connection. Everything else then streams in one file at a
-  // time (smallest first), each appearing as soon as it is ready.
-  const first = man.layers.filter((l) => FIRST_LAYERS.has(l.id));
-  const rest = man.layers.filter((l) => !FIRST_LAYERS.has(l.id)).sort((a, b) => a.bytes - b.bytes);
-  const firstBytes = first.reduce((s, l) => s + l.bytes, 0);
-  const got = {};
-  const bar = () => {
-    const pct = Math.min(100, (first.reduce((s, l) => s + (got[l.id] || 0), 0) / firstBytes) * 100);
+  // Download every part one after another (so the label can say what is coming in), and build
+  // each one's shaders and textures while the next downloads. The loading screen stays up
+  // until all of it is ready, so the hall opens complete and without stutters.
+  const list = [...man.layers].sort((a, b) => a.bytes - b.bytes);
+  const total = list.reduce((s, l) => s + l.bytes, 0);
+  let doneBytes = 0;
+  const bar = (f, entry) => {
+    const pct = Math.min(100, ((doneBytes + f * entry.bytes) / total) * 100);
     $('#load-progress').style.width = `${pct.toFixed(1)}%`;
     $('#load-pct').textContent = `${Math.floor(pct)}%`;
   };
-  await Promise.all(first.map((entry) => loadLayer(entry, (f) => { got[entry.id] = f * entry.bytes; bar(); })
-    .then((ok) => ok && prepareLayer(layers[entry.id]))));
+  const preparing = [];
+  for (const [i, entry] of list.entries()) {
+    $('#load-detail').textContent = `Loading ${entry.label} (${i + 1} of ${list.length})`;
+    const ok = await loadLayer(entry, (f) => bar(f, entry));
+    doneBytes += entry.bytes;
+    if (ok) preparing.push(prepareLayer(layers[entry.id]));
+  }
+  $('#load-detail').textContent = 'Getting everything ready';
+  await Promise.all(preparing);
 
-  $('#load-detail').textContent = 'Preparing the hall';
   refreshMaterials();
   applyVisibility();
   renderer.render(scene, camera);   // first frame (incl. the shadow map) while the loading screen is still up
@@ -176,10 +181,7 @@ async function boot() {
   setTimeout(() => { $('#loading').hidden = true; }, 1200);   // stop its animations once it's gone
   if (location.hash) applyHash();
   try { if (!localStorage.getItem('b10-help-seen')) { $('#help').showModal(); localStorage.setItem('b10-help-seen', '1'); } } catch { /* storage blocked */ }
-  streamLayers(rest);
 }
-
-const FIRST_LAYERS = new Set(['building', 'guides']);
 
 // Tips that cycle on the loading screen, so the wait teaches the controls.
 const LOAD_TIPS = matchMedia('(pointer: coarse)').matches ? [
@@ -216,27 +218,6 @@ function loadLayer(entry, onProgress) {
     }, (e) => onProgress?.(Math.min(0.99, e.loaded / entry.bytes)),
     (err) => { console.error(entry.file, err); resolve(false); });
   });
-}
-
-// Download the remaining layers one after another (so each finishes as early as possible instead
-// of all sharing the connection), with a small status pill while it runs.
-async function streamLayers(list) {
-  const hud = $('#streamhud'), text = $('#stream-text');
-  const total = list.reduce((s, l) => s + l.bytes, 0);
-  let doneBytes = 0;
-  const preparing = [];
-  hud.hidden = list.length === 0;
-  for (const entry of list) {
-    const show = (f) => {
-      text.textContent = `Loading ${entry.label} · ${Math.round(((doneBytes + f * entry.bytes) / total) * 100)}%`;
-    };
-    show(0);
-    const ok = await loadLayer(entry, show);
-    doneBytes += entry.bytes;
-    if (ok) preparing.push(prepareLayer(layers[entry.id]));   // build it while the next one downloads
-  }
-  await Promise.all(preparing);
-  hud.hidden = true;
 }
 
 // Get a layer ready to draw: build its shaders and upload its textures, then show it.
