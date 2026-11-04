@@ -163,51 +163,24 @@ async function boot() {
     $('#load-pct').textContent = `${Math.floor(pct)}%`;
   };
   const preparing = [];
-  for (const [i, entry] of list.entries()) {
-    $('#load-detail').textContent = `Loading ${entry.label} (${i + 1} of ${list.length})`;
+  for (const entry of list) {
+    $('#load-detail').textContent = `Loading ${entry.label}`;
     const ok = await loadLayer(entry, (f) => bar(f, entry));
     doneBytes += entry.bytes;
     if (ok) preparing.push(prepareLayer(layers[entry.id]));
   }
-  $('#load-detail').textContent = 'Getting everything ready';
+  $('#load-detail').textContent = 'Almost ready';
   await Promise.all(preparing);
 
   refreshMaterials();
   applyVisibility();
   renderer.render(scene, camera);   // first frame (incl. the shadow map) while the loading screen is still up
   state.loading = false;
-  clearInterval(tipTimer);
   $('#loading').classList.add('done');
   setTimeout(() => { $('#loading').hidden = true; }, 1200);   // stop its animations once it's gone
   if (location.hash) applyHash();
   try { if (!localStorage.getItem('b10-help-seen')) { $('#help').showModal(); localStorage.setItem('b10-help-seen', '1'); } } catch { /* storage blocked */ }
 }
-
-// Tips that cycle on the loading screen, so the wait teaches the controls.
-const LOAD_TIPS = matchMedia('(pointer: coarse)').matches ? [
-  '<b>Tap any stand</b> to fly straight to it.',
-  'Tap the <b>walk</b> button to explore the hall at eye level.',
-  'Tap <b>Tour</b> for a guided tour of every school.',
-  'Tap a school’s <b>coloured floor</b> to jump to its zone.',
-  '<b>Pinch</b> to move closer, <b>two fingers</b> to drag the view.',
-  'Use <b>Tint by school</b> to see who is where at a glance.',
-] : [
-  '<b>Click any stand</b> to fly straight to it.',
-  'Press <b>V</b> to walk the hall at eye level.',
-  'Press <b>T</b> for a guided tour of every school.',
-  'Click a school’s <b>coloured floor</b> to jump to its zone.',
-  'Press <b>L</b> to switch the sun shadows on or off.',
-  'Use <b>Tint by school</b> to see who is where at a glance.',
-  'Keys <b>1–5</b> jump between views.',
-];
-let tipIdx = Math.floor(Math.random() * LOAD_TIPS.length);
-const showTip = () => {
-  const el = $('#load-tip');
-  el.classList.add('out');
-  setTimeout(() => { el.innerHTML = LOAD_TIPS[tipIdx++ % LOAD_TIPS.length]; el.classList.remove('out'); }, 500);
-};
-showTip();
-const tipTimer = setInterval(showTip, 4500);
 
 function loadLayer(entry, onProgress) {
   return new Promise((resolve) => {
@@ -260,10 +233,9 @@ async function prepareLayer(l) {
 }
 
 function fail(msg) {
-  clearInterval(tipTimer);
   $('#loading').classList.add('error');
-  $('.loading-title').textContent = 'Something went wrong';
-  $('#load-detail').textContent = msg;
+  $('#load-pct').textContent = '';
+  $('#load-detail').textContent = `Something went wrong: ${msg}`;
 }
 
 // Merge each layer's meshes by material: thousands of SketchUp parts become a few hundred draw calls.
