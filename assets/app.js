@@ -111,6 +111,7 @@ const state = {
   tint: { on: false, strength: 0.6, colours: {} },
   shadows: (() => { try { return localStorage.getItem('b10-shadows') !== '0'; } catch { return true; } })(),
   walking: false,
+  loading: true,     // no rendering until the models are in and their shaders are built
   tour: null,
   fly: null,
 };
@@ -147,32 +148,105 @@ async function boot() {
 
   for (const l of man.layers) userVisible[l.id] = l.visible !== false;
 
-  const total = man.layers.reduce((s, l) => s + l.bytes, 0);
-  const done = {};
-  const progress = () => {
-    const got = Object.values(done).reduce((a, b) => a + b, 0);
-    $('#load-progress').style.width = `${Math.min(100, (got / total) * 100).toFixed(1)}%`;
-  };
-
   buildUI();
   goTo(poses.overview(), 0);
 
-  await Promise.all(man.layers.map((entry) => new Promise((resolve) => {
-    loader.load(`${entry.file}?v=${man.version}`, (gltf) => {
-      done[entry.id] = entry.bytes; progress();
-      addLayer(entry, gltf.scene);
-      $('#load-detail').textContent = `Loaded ${entry.label}`;
-      resolve();
-    }, (e) => { if (e.total) { done[entry.id] = (e.loaded / e.total) * entry.bytes; progress(); } },
-    (err) => { console.error(entry.file, err); $('#load-detail').textContent = `Could not load ${entry.label}`; resolve(); });
-  })));
+  // The hall shell and zone guides are small and load first, so the plan is on screen within
+  // seconds even on a slow phone connection. Everything else then streams in one file at a
+  // time (smallest first), each appearing as soon as it is ready.
+  const first = man.layers.filter((l) => FIRST_LAYERS.has(l.id));
+  const rest = man.layers.filter((l) => !FIRST_LAYERS.has(l.id)).sort((a, b) => a.bytes - b.bytes);
+  const firstBytes = first.reduce((s, l) => s + l.bytes, 0);
+  const got = {};
+  const bar = () => {
+    const n = first.reduce((s, l) => s + (got[l.id] || 0), 0);
+    $('#load-progress').style.width = `${Math.min(100, (n / firstBytes) * 100).toFixed(1)}%`;
+  };
+  await Promise.all(first.map((entry) => loadLayer(entry, (f) => { got[entry.id] = f * entry.bytes; bar(); })
+    .then((ok) => ok && prepareLayer(layers[entry.id]))));
 
+  $('#load-detail').textContent = 'Preparing the hall';
   refreshMaterials();
   applyVisibility();
+  renderer.render(scene, camera);   // first frame (incl. the shadow map) while the loading screen is still up
+  state.loading = false;
   $('#loading').classList.add('done');
-  warmUpBlocks();
   if (location.hash) applyHash();
   try { if (!localStorage.getItem('b10-help-seen')) { $('#help').showModal(); localStorage.setItem('b10-help-seen', '1'); } } catch { /* storage blocked */ }
+  streamLayers(rest);
+}
+
+const FIRST_LAYERS = new Set(['building', 'guides']);
+
+function loadLayer(entry, onProgress) {
+  return new Promise((resolve) => {
+    loader.load(`${entry.file}?v=${man.version}`, (gltf) => {
+      onProgress?.(1);
+      addLayer(entry, gltf.scene);
+      resolve(true);
+    }, (e) => onProgress?.(Math.min(0.99, e.loaded / entry.bytes)),
+    (err) => { console.error(entry.file, err); resolve(false); });
+  });
+}
+
+// Download the remaining layers one after another (so each finishes as early as possible instead
+// of all sharing the connection), with a small status pill while it runs.
+async function streamLayers(list) {
+  const hud = $('#streamhud'), text = $('#stream-text');
+  const total = list.reduce((s, l) => s + l.bytes, 0);
+  let doneBytes = 0;
+  const preparing = [];
+  hud.hidden = list.length === 0;
+  for (const entry of list) {
+    const show = (f) => {
+      text.textContent = `Loading ${entry.label} · ${Math.round(((doneBytes + f * entry.bytes) / total) * 100)}%`;
+    };
+    show(0);
+    const ok = await loadLayer(entry, show);
+    doneBytes += entry.bytes;
+    if (ok) preparing.push(prepareLayer(layers[entry.id]));   // build it while the next one downloads
+  }
+  await Promise.all(preparing);
+  hud.hidden = true;
+}
+
+// Get a layer ready to draw: build its shaders and upload its textures, then show it.
+// Left to the first render, the shaders compile one after another and freeze the page for
+// several seconds; compileAsync lets the browser compile them in parallel in the background.
+// Hidden layers (the roof) are included so entering walk mode doesn't stall either.
+const offscreenRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
+async function prepareLayer(l) {
+  const g = l.group;
+  g.visible = true;
+  const compiled = [renderer.compileAsync(g, camera, scene)];
+  // glass ("transmission") materials make three.js also draw the scene into an offscreen
+  // buffer, which uses its own shader variants: build those now too
+  renderer.setRenderTarget(offscreenRT);
+  compiled.push(renderer.compileAsync(g, camera, scene));
+  // ...where two-sided glass is first drawn back faces only
+  const glass = [];
+  g.traverse((o) => { if (o.material?.transmission > 0 && o.material.side === THREE.DoubleSide) glass.push(o.material); });
+  if (glass.length) {
+    glass.forEach((m) => { m.side = THREE.BackSide; m.needsUpdate = true; });
+    compiled.push(renderer.compileAsync(g, camera, scene));
+    glass.forEach((m) => { m.side = THREE.DoubleSide; m.needsUpdate = true; });
+  }
+  renderer.setRenderTarget(null);
+  g.visible = false;                // compileAsync has already collected the objects
+  const textures = new Set();
+  g.traverse((o) => {
+    for (const m of [].concat(o.material || [])) for (const v of Object.values(m)) if (v?.isTexture) textures.add(v);
+  });
+  let slice = performance.now();
+  for (const t of textures) {
+    renderer.initTexture(t);
+    if (performance.now() - slice > 50) { await new Promise((r) => setTimeout(r)); slice = performance.now(); }
+  }
+  await Promise.all(compiled.map((p) => p.catch((e) => console.warn('shader precompile', e))));
+  l.ready = true;
+  if (state.shading === 'solid') refreshMaterials();
+  applyVisibility();
+  if (l.entry.zone) { placeLabel(l.entry.zone); warmUpBlocks([l]); }
 }
 
 function fail(msg) {
@@ -289,7 +363,8 @@ function flipWinding(g) {
 // overview). Schools + zone guides: visitor's choice.
 function applyVisibility() {
   for (const [id, l] of Object.entries(layers)) {
-    if (id === ROOF) l.group.visible = state.walking;
+    if (!l.ready) l.group.visible = false;          // still being prepared
+    else if (id === ROOF) l.group.visible = state.walking;
     else if (USER_LAYERS.has(id)) l.group.visible = userVisible[id] !== false;
     else l.group.visible = true;
   }
@@ -689,8 +764,8 @@ function blockGeometry(blk) {                          // a stand's own triangle
 }
 // prepare every stand's pick data (triangles + BVH) a few at a time after loading, so the
 // first hover on a heavy stand doesn't stutter
-function warmUpBlocks() {
-  const all = Object.values(layers).filter((l) => l.entry.zone).flatMap((l) => l.blocks.filter((b) => b.pieces));
+function warmUpBlocks(list = Object.values(layers)) {
+  const all = list.filter((l) => l.entry.zone).flatMap((l) => l.blocks.filter((b) => b.pieces));
   const queue = all.map((b) => () => blockGeometry(b));
   const step = (deadline) => {
     const until = performance.now() + 8;
@@ -1226,6 +1301,7 @@ function clampOrbit() {
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1);
+  if (state.loading) return;
   if (state.tour) updateTour(dt);
   else if (state.fly) {
     const f = state.fly;

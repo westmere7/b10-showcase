@@ -136,6 +136,9 @@ input.switch:focus-visible { outline: 2px solid var(--rmit-red); outline-offset:
 .hud { top: var(--gap); left: 50%; transform: translateX(-50%); padding: 8px 8px 8px 16px; gap: 14px; max-width: min(640px, calc(100% - 24px)); font-size: 13px; }
 .hud.dark { background: var(--ink); color: #fff; }
 #walkhint { padding: 9px 16px; text-align: center; display: block; }
+.hud.stream { top: auto; bottom: var(--gap); padding: 7px 14px; gap: 9px; align-items: center; font-size: 12.5px; pointer-events: none; }
+.hud.stream .spin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid rgba(0, 0, 0, .14); border-top-color: var(--rmit-red); animation: spin .8s linear infinite; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .hud-text { display: flex; flex-direction: column; min-width: 0; }
 .hud-text span { font-size: 12px; opacity: .75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tour-bar { width: 110px; height: 4px; border-radius: 4px; background: rgba(255, 255, 255, .22); overflow: hidden; flex: none; }
@@ -184,6 +187,7 @@ input.switch:focus-visible { outline: 2px solid var(--rmit-red); outline-offset:
   .rail .tool { width: 48px; height: 46px; }
   .sep.h { width: 1px; height: auto; margin: 6px 4px; }
   .navbar { bottom: 78px; }
+  .hud.stream { bottom: auto; top: 64px; }
   [data-tip]:hover::after { display: none; }
   .pop { left: 12px !important; right: 12px; width: auto; }
 }

@@ -29,6 +29,9 @@ From the `3D` folder, run `_tools\publish.bat` (double-click it, or run it in a 
    `_build/EXPday26_web.blend` (the master is never modified);
 2. runs `_tools/export_web.py`, which writes `models/*.glb` and `models/manifest.json` here.
 
+The export stores any geometry shared between objects (array modifiers, copied stands) only once. This
+is lossless: every mesh keeps its exact shape, normals, UVs and materials.
+
 Then commit and push `models/`. The viewer adds the manifest's version number to each model URL,
 so visitors get the new models straight away instead of stale cached ones.
 
