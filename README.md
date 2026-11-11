@@ -29,6 +29,10 @@ From the `3D` folder, run `_tools\publish.bat` (double-click it, or run it in a 
    `_build/EXPday26_web.blend` (the master is never modified);
 2. runs `_tools/export_web.py`, which writes `models/*.glb` and `models/manifest.json` here.
 
+SCD's model is rebuilt from the newest file in `SCD/` (a SketchUp `.skp`, or a `.dae` export). `.skp` files are read
+with the [OpenSKP](https://extensions.blender.org/add-ons/openskp-import-export/) add-on kept in `_tools/openskp`, so
+SketchUp isn't needed; the build turns SCD to whichever quarter turn best fits its zone and sets it on the floor.
+
 The export stores any geometry shared between objects (array modifiers, copied stands) only once. This
 is lossless: every mesh keeps its exact shape, normals, UVs and materials.
 
