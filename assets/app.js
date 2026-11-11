@@ -343,7 +343,10 @@ function addLayer(entry, root) {
   const buckets = new Map();
   root.traverse((o) => {
     if (!o.isMesh) return;
-    o.material.side = THREE.DoubleSide;   // SketchUp-style models have inward-facing faces; show both sides
+    // SketchUp-style models have inward-facing faces: show both sides. Except materials tagged
+    // "[1-sided]": SketchUp faces painted differently on each side arrive as two overlapping
+    // one-sided copies, which would flicker against each other if both were drawn two-sided.
+    o.material.side = o.material.name?.includes('[1-sided]') ? THREE.FrontSide : THREE.DoubleSide;
     const g = o.geometry;
     const sig = Object.keys(g.attributes).sort()
       .map((k) => `${k}:${g.attributes[k].itemSize}:${g.attributes[k].normalized}:${g.attributes[k].array.constructor.name}`)
@@ -427,8 +430,10 @@ function makeBlockFinder(root, blocks) {
   };
   const fits = (n) => { const s = boxOf(n).getSize(V3()); return Math.max(s.x, s.y, s.z) <= BLOCK_MAX; };
   return (part) => {
+    // the build marks hand-made blocks ("SCD_block_003", "TBS_block_02_005"): use those as they are
     let node = part;
-    while (node.parent && node.parent !== root && fits(node.parent)) node = node.parent;
+    for (let n = part; n && n !== root; n = n.parent) if (/_block_\d+/.test(n.name)) { node = n; break; }
+    if (node === part) while (node.parent && node.parent !== root && fits(node.parent)) node = node.parent;
     if (!idOf.has(node)) { idOf.set(node, blocks.length); blocks.push({ box: boxOf(node).clone(), name: node.name || '' }); }
     return idOf.get(node);
   };
