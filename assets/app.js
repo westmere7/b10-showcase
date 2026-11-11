@@ -845,10 +845,7 @@ function zoneAt(clientX, clientY) {
     const id = h.object.userData.zoneId;
     const l = man.layers.find((x) => x.zone === id);
     if (l && userVisible[l.id] === false) continue;         // school hidden: not clickable
-    const z = zones[id];
-    const size = Math.max(z.box.max.x - z.box.min.x, z.box.max.z - z.box.min.z);
-    if (camera.position.distanceTo(z.centre) < size * 1.1) return null;   // already zoomed in on it
-    return id;
+    return id;                                               // always: even when already zoomed in on it
   }
   return null;
 }
