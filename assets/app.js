@@ -174,6 +174,7 @@ async function boot() {
   }
   $('#load-detail').textContent = 'Almost ready';
   await Promise.all(preparing);
+  addEntranceArrow();
 
   fitCutaway();
   refreshMaterials();
@@ -185,6 +186,25 @@ async function boot() {
   setTimeout(() => { $('#loading').hidden = true; }, 1200);   // stop its animations once it's gone
   if (location.hash) applyHash();
   try { if (!localStorage.getItem('b10-help-seen')) { $('#help').showModal(); localStorage.setItem('b10-help-seen', '1'); } } catch { /* storage blocked */ }
+}
+
+// Red arrow painted on the floor at the entrance (the +Z side, where the Entrance view starts),
+// pointing into the hall. Part of the zone guides, so it shows and hides with them.
+function addEntranceArrow() {
+  const L = 3.4, shaft = 0.5, head = 1.3, headLen = 1.1;   // metres
+  const s = new THREE.Shape();
+  s.moveTo(-shaft / 2, 0); s.lineTo(shaft / 2, 0); s.lineTo(shaft / 2, L - headLen); s.lineTo(head / 2, L - headLen);
+  s.lineTo(0, L); s.lineTo(-head / 2, L - headLen); s.lineTo(-shaft / 2, L - headLen); s.closePath();
+  const geo = new THREE.ShapeGeometry(s);
+  geo.rotateX(-Math.PI / 2);                                // lie flat; the tip points to -Z (into the hall)
+  const mat = new THREE.MeshBasicMaterial({
+    color: '#E60028', side: THREE.DoubleSide, toneMapped: false,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,   // sit cleanly on the floor / guides
+  });
+  const arrow = new THREE.Mesh(geo, mat);
+  arrow.name = 'EntranceArrow';
+  arrow.position.set((walkBox.min.x + walkBox.max.x) / 2, floorY + 0.02, walkBox.max.z + 0.4);
+  (layers.guides?.group ?? scene).add(arrow);
 }
 
 function loadLayer(entry, onProgress) {
