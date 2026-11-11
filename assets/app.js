@@ -244,10 +244,11 @@ function fail(msg) {
 }
 
 // ------------------------------------------------------------------ cutaway
-// In orbit views, any part of the hall structure (walls, columns, beams) that sits between the camera and
+// In orbit views, any part of the hall structure (walls, columns, beams) or grandstands that sits between the camera and
 // the exhibition area fades out, so it never hides the stands. It is worked out per pixel in the shaders:
 // a surface fades when the line from the camera through it goes on into the exhibits' box. Each hall
 // mesh is drawn twice: solid (skipping faded pixels) and as a see-through "ghost" (only faded pixels).
+const CUT_LAYERS = new Set(['building', 'seating']);   // hall structure and grandstands
 const CUT_ALPHA = 0.14;                          // how much of a faded wall is left
 const cut = {
   on: { value: 0 },                              // 0 = off (walk mode), 1 = on; eased in the render loop
@@ -291,22 +292,33 @@ function cutPatch(mat, ghost) {
   return mat;
 }
 const cuttable = (mat) => !(mat.transmission > 0);   // glass is see-through already
+// Ghosts are drawn in two steps so that only the nearest faded surface shows at each pixel (rows of seats
+// or layered wall panels would otherwise stack into a milky haze): first depth only, then colour.
 const ghostCache = new Map();
-function ghostOf(mat) {
-  if (!ghostCache.has(mat.uuid)) {
+function ghostOf(mat, depthOnly) {
+  const key = `${mat.uuid}|${depthOnly ? 'd' : 'c'}`;
+  if (!ghostCache.has(key)) {
     const g = cutPatch(mat.clone(), true);
-    g.transparent = true; g.depthWrite = false;
-    ghostCache.set(mat.uuid, g);
+    g.transparent = true;
+    g.depthWrite = depthOnly;
+    g.colorWrite = !depthOnly;
+    ghostCache.set(key, g);
   }
-  return ghostCache.get(mat.uuid);
+  return ghostCache.get(key);
 }
-// hall meshes: solid version skips faded pixels; a ghost twin draws them see-through
+function disposeGhosts(mat) {
+  for (const k of ['d', 'c']) { ghostCache.get(`${mat.uuid}|${k}`)?.dispose(); ghostCache.delete(`${mat.uuid}|${k}`); }
+}
+// cutaway meshes: the solid version skips faded pixels; ghost twins draw them see-through
 function setHallMaterial(mesh, mat) {
   const ok = cuttable(mat);
   if (ok && !mat.userData.cut) cutPatch(mat, false);
   mesh.material = mat;
-  const ghost = mesh.userData.ghost;
-  if (ghost) { ghost.material = ok ? ghostOf(mat) : mat; ghost.userData.off = !ok; }
+  for (const [ghost, depthOnly] of [[mesh.userData.ghostDepth, true], [mesh.userData.ghost, false]]) {
+    if (!ghost) continue;
+    ghost.material = ok ? ghostOf(mat, depthOnly) : mat;
+    ghost.userData.off = !ok;
+  }
 }
 // the exhibits' box: the three school zones, from just above the floor to the top of the tallest stand
 function fitCutaway() {
@@ -377,14 +389,17 @@ function addLayer(entry, root) {
       }
       group.add(mesh);
       meshes.push(mesh);
-      if (entry.id === 'building') {                  // see "cutaway"
-        const ghost = new THREE.Mesh(g, material);
-        ghost.matrixAutoUpdate = false;
-        ghost.receiveShadow = true;
-        ghost.visible = false;
-        mesh.userData.ghost = ghost;
-        group.add(ghost);
-        ghosts.push(ghost);
+      if (CUT_LAYERS.has(entry.id)) {                 // see "cutaway"
+        for (const [key, order] of [['ghostDepth', 2], ['ghost', 3]]) {   // drawn after the other see-through things
+          const ghost = new THREE.Mesh(g, material);
+          ghost.matrixAutoUpdate = false;
+          ghost.receiveShadow = true;
+          ghost.renderOrder = order;
+          ghost.visible = false;
+          mesh.userData[key] = ghost;
+          group.add(ghost);
+          ghosts.push(ghost);
+        }
         setHallMaterial(mesh, material);
       }
     }
@@ -459,7 +474,7 @@ function applyVisibility() {
 // Tint applies in Solid mode only, and only to school models (never the zone guides).
 const matCache = new Map();
 function clearMatCache() {
-  for (const m of matCache.values()) { m.dispose(); ghostCache.get(m.uuid)?.dispose(); ghostCache.delete(m.uuid); }
+  for (const m of matCache.values()) { m.dispose(); disposeGhosts(m); }
   matCache.clear();
 }
 

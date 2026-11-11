@@ -48,7 +48,7 @@ so visitors get the new models straight away instead of stale cached ones.
 
 ## Controls
 
-- **Orbit:** left-drag rotates; middle- or right-drag (or two fingers) drags the view; the scroll wheel or a pinch moves forward and back along the view direction. The on-screen buttons do the same. Click any stand to fly straight to it (hovering outlines it); click the open floor of a school's coloured zone to fly to that school. Any part of the hall structure (walls, columns) that comes between the camera and the stands fades to a faint outline; walk mode keeps it solid.
+- **Orbit:** left-drag rotates; middle- or right-drag (or two fingers) drags the view; the scroll wheel or a pinch moves forward and back along the view direction. The on-screen buttons do the same. Click any stand to fly straight to it (hovering outlines it); click the open floor of a school's coloured zone to fly to that school. Any part of the hall structure (walls, columns) or the grandstands that comes between the camera and the stands fades to a faint outline; walk mode keeps it solid.
 - **Mac trackpad:** click-drag rotates, a two-finger swipe drags the view, a pinch moves forward and back, and a two-finger twist rotates (Safari).
 - **Walk mode:** 1.7 m eye height. Click the floor to walk there, drag to look, use WASD or the arrow keys to move, and press Esc to exit.
 - **Views:** Overview, Top, one per school, and Entrance (starts walk mode).
