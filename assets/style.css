@@ -156,7 +156,8 @@ input.switch:focus-visible { outline: 2px solid var(--rmit-red); outline-offset:
 .loading.done { opacity: 0; pointer-events: none; }
 .loading-card { position: relative; display: grid; justify-items: center; }
 .loading-lockup { display: block; width: min(320px, 72vw); height: auto; animation: enter .8s cubic-bezier(.2, .8, .2, 1) both; }
-.loading-title { margin-top: 26px; font-size: 20px; font-weight: 700; letter-spacing: .02em; color: #ff1f45; animation: enter .8s cubic-bezier(.2, .8, .2, 1) .12s both; }
+.loading-title { margin-top: 26px; font-size: 22px; font-weight: 800; letter-spacing: .02em; color: #ff1f45; animation: enter .8s cubic-bezier(.2, .8, .2, 1) .12s both; }
+.loading-by { margin-top: 4px; font-size: 12.5px; letter-spacing: .02em; color: rgba(255, 255, 255, .7); animation: enter .8s cubic-bezier(.2, .8, .2, 1) .16s both; }
 .loading .bar { width: min(240px, 60vw); height: 2px; margin-top: 24px; background: rgba(255, 255, 255, .15); overflow: hidden; animation: enter .8s cubic-bezier(.2, .8, .2, 1) .2s both; }
 .loading .bar div { height: 100%; width: 0; background: #ff1f45; transition: width .3s; }
 .loading-status {
@@ -173,7 +174,7 @@ input.switch:focus-visible { outline: 2px solid var(--rmit-red); outline-offset:
 .loading.error .bar { display: none; }
 .loading.error .loading-status { color: #fff; font-size: 13px; }
 @media (prefers-reduced-motion: reduce) {
-  .loading-lockup, .loading-title, .loading .bar, .loading-status, .loading-credit { animation: none; }
+  .loading-lockup, .loading-title, .loading-by, .loading .bar, .loading-status, .loading-credit { animation: none; }
 }
 
 /* ---------- help ---------- */
