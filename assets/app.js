@@ -605,8 +605,16 @@ function zonePose(id) {
 
 // ------------------------------------------------------------------ fly / go
 const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+// OrbitControls keeps easing out a recent drag (damping). It isn't updated during a flight, so that
+// leftover motion would be applied in one go when the flight ends and nudge the camera off its pose.
+function stopOrbitMomentum() {
+  controls._sphericalDelta?.set(0, 0, 0);
+  controls._panOffset?.set(0, 0, 0);
+  if ('_scale' in controls) controls._scale = 1;
+}
 function goTo(pose, dur = 1.3, after) {
   if (state.walking && !pose.walk) exitWalk(false);
+  stopOrbitMomentum();
   if (dur <= 0) {
     camera.position.copy(pose.pos); controls.target.copy(pose.target); camera.lookAt(pose.target);
     controls.update(); after?.(); return;
@@ -1414,7 +1422,7 @@ renderer.setAnimationLoop(() => {
     camera.position.lerpVectors(f.from, f.to, e);
     controls.target.lerpVectors(f.fromT, f.toT, e);
     camera.lookAt(controls.target);
-    if (f.t >= f.dur) { state.fly = null; controls.update(); f.after?.(); }
+    if (f.t >= f.dur) { state.fly = null; stopOrbitMomentum(); controls.update(); f.after?.(); }
   } else if (state.walking) updateWalk(dt);
   else { controls.update(); clampOrbit(); }
   updateCutaway(dt);
