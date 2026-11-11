@@ -172,8 +172,10 @@ async function boot() {
   $('#load-detail').textContent = 'Almost ready';
   await Promise.all(preparing);
 
+  fitCutaway();
   refreshMaterials();
   applyVisibility();
+  updateCutaway(1);
   renderer.render(scene, camera);   // first frame (incl. the shadow map) while the loading screen is still up
   state.loading = false;
   $('#loading').classList.add('done');
@@ -201,6 +203,8 @@ const offscreenRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatTyp
 async function prepareLayer(l) {
   const g = l.group;
   g.visible = true;
+  const myGhosts = ghosts.filter((m) => m.parent === g);
+  myGhosts.forEach((m) => { m.visible = true; });   // build the cutaway's see-through shaders too
   const compiled = [renderer.compileAsync(g, camera, scene)];
   // glass ("transmission") materials make three.js also draw the scene into an offscreen
   // buffer, which uses its own shader variants: build those now too
@@ -216,6 +220,7 @@ async function prepareLayer(l) {
   }
   renderer.setRenderTarget(null);
   g.visible = false;                // compileAsync has already collected the objects
+  myGhosts.forEach((m) => { m.visible = false; });
   const textures = new Set();
   g.traverse((o) => {
     for (const m of [].concat(o.material || [])) for (const v of Object.values(m)) if (v?.isTexture) textures.add(v);
@@ -236,6 +241,88 @@ function fail(msg) {
   $('#loading').classList.add('error');
   $('#load-pct').textContent = '';
   $('#load-detail').textContent = `Something went wrong: ${msg}`;
+}
+
+// ------------------------------------------------------------------ cutaway
+// In orbit views, any part of the hall structure (walls, columns, beams) that sits between the camera and
+// the exhibition area fades out, so it never hides the stands. It is worked out per pixel in the shaders:
+// a surface fades when the line from the camera through it goes on into the exhibits' box. Each hall
+// mesh is drawn twice: solid (skipping faded pixels) and as a see-through "ghost" (only faded pixels).
+const CUT_ALPHA = 0.14;                          // how much of a faded wall is left
+const cut = {
+  on: { value: 0 },                              // 0 = off (walk mode), 1 = on; eased in the render loop
+  min: { value: V3() }, max: { value: V3() },     // the exhibits' box (set once everything has loaded)
+  alpha: { value: CUT_ALPHA },
+};
+const ghosts = [];
+const CUT_GLSL = /* glsl */`
+  uniform float uCutOn; uniform vec3 uCutMin; uniform vec3 uCutMax; uniform float uCutAlpha;
+  varying vec3 vCutPos;
+  float cutAmount(vec3 p) {
+    if (uCutOn <= 0.0) return 0.0;
+    vec3 d = p - cameraPosition;
+    float tp = length(d);
+    d /= tp;
+    vec3 inv = 1.0 / mix(vec3(1e-5), d, step(1e-5, abs(d)));
+    vec3 t0 = (uCutMin - cameraPosition) * inv, t1 = (uCutMax - cameraPosition) * inv;
+    vec3 a = min(t0, t1), b = max(t0, t1);
+    float tn = max(max(a.x, a.y), a.z), tf = min(min(b.x, b.y), b.z);
+    if (tf <= tn || tn <= tp) return 0.0;          // the view through this point misses the exhibits, or it is behind them
+    // soft edges: rays that only clip a corner of the box, or surfaces right at its boundary, fade less
+    return uCutOn * smoothstep(0.0, 2.5, tf - tn) * smoothstep(0.0, 0.4, tn - tp);
+  }
+`;
+function cutPatch(mat, ghost) {
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uCutOn = cut.on; sh.uniforms.uCutMin = cut.min; sh.uniforms.uCutMax = cut.max; sh.uniforms.uCutAlpha = cut.alpha;
+    sh.vertexShader = 'varying vec3 vCutPos;\n' + sh.vertexShader.replace('#include <project_vertex>',
+      '#include <project_vertex>\n  vCutPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    sh.fragmentShader = CUT_GLSL + sh.fragmentShader
+      .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+  float cutF = cutAmount(vCutPos);
+  if (${ghost ? 'cutF <= 0.002' : 'cutF > 0.002'}) discard;`)
+      .replace('#include <opaque_fragment>', ghost
+        ? '#include <opaque_fragment>\n  gl_FragColor.a *= mix(1.0, uCutAlpha, cutF);'
+        : '#include <opaque_fragment>');
+  };
+  mat.customProgramCacheKey = () => (ghost ? 'cut-ghost' : 'cut-solid');
+  mat.userData.cut = true;
+  mat.needsUpdate = true;
+  return mat;
+}
+const cuttable = (mat) => !(mat.transmission > 0);   // glass is see-through already
+const ghostCache = new Map();
+function ghostOf(mat) {
+  if (!ghostCache.has(mat.uuid)) {
+    const g = cutPatch(mat.clone(), true);
+    g.transparent = true; g.depthWrite = false;
+    ghostCache.set(mat.uuid, g);
+  }
+  return ghostCache.get(mat.uuid);
+}
+// hall meshes: solid version skips faded pixels; a ghost twin draws them see-through
+function setHallMaterial(mesh, mat) {
+  const ok = cuttable(mat);
+  if (ok && !mat.userData.cut) cutPatch(mat, false);
+  mesh.material = mat;
+  const ghost = mesh.userData.ghost;
+  if (ghost) { ghost.material = ok ? ghostOf(mat) : mat; ghost.userData.off = !ok; }
+}
+// the exhibits' box: the three school zones, from just above the floor to the top of the tallest stand
+function fitCutaway() {
+  const box = new THREE.Box3();
+  for (const z of Object.values(zones)) box.union(z.box);
+  let top = floorY + 2.5;
+  for (const l of Object.values(layers)) if (l.entry.zone) top = Math.max(top, new THREE.Box3().setFromObject(l.group).max.y);
+  box.min.y = floorY + 0.05;
+  box.max.y = Math.min(top, hallBox.max.y - 0.3);
+  cut.min.value.copy(box.min); cut.max.value.copy(box.max);
+}
+function updateCutaway(dt) {
+  const target = state.walking ? 0 : 1;
+  const v = cut.on.value + (target - cut.on.value) * Math.min(1, dt * 6);
+  cut.on.value = Math.abs(v - target) < 0.002 ? target : v;
+  for (const g of ghosts) g.visible = cut.on.value > 0 && !g.userData.off;
 }
 
 // Merge each layer's meshes by material: thousands of SketchUp parts become a few hundred draw calls.
@@ -290,6 +377,16 @@ function addLayer(entry, root) {
       }
       group.add(mesh);
       meshes.push(mesh);
+      if (entry.id === 'building') {                  // see "cutaway"
+        const ghost = new THREE.Mesh(g, material);
+        ghost.matrixAutoUpdate = false;
+        ghost.receiveShadow = true;
+        ghost.visible = false;
+        mesh.userData.ghost = ghost;
+        group.add(ghost);
+        ghosts.push(ghost);
+        setHallMaterial(mesh, material);
+      }
     }
     if (merged && geos.length > 1) geos.forEach((g) => g.dispose());
   }
@@ -361,7 +458,10 @@ function applyVisibility() {
 // ------------------------------------------------------------------ materials: solid / tint
 // Tint applies in Solid mode only, and only to school models (never the zone guides).
 const matCache = new Map();
-function clearMatCache() { for (const m of matCache.values()) m.dispose(); matCache.clear(); }
+function clearMatCache() {
+  for (const m of matCache.values()) { m.dispose(); ghostCache.get(m.uuid)?.dispose(); ghostCache.delete(m.uuid); }
+  matCache.clear();
+}
 
 function tintFor(layerId) {
   const z = layers[layerId]?.entry.zone;
@@ -394,7 +494,9 @@ function refreshMaterials() {
     for (const mesh of meshes) {
       const orig = mesh.userData.orig;
       if (entry.id === 'guides') { mesh.material = orig; continue; }
-      mesh.material = state.shading === 'solid' ? solidMaterial(orig, tint) : orig;
+      const mat = state.shading === 'solid' ? solidMaterial(orig, tint) : orig;
+      if (mesh.userData.ghost) setHallMaterial(mesh, mat);
+      else mesh.material = mat;
     }
   }
   scene.environmentIntensity = state.shading === 'solid' ? ENV.solid : ENV.material;
@@ -1296,11 +1398,12 @@ renderer.setAnimationLoop(() => {
     if (f.t >= f.dur) { state.fly = null; controls.update(); f.after?.(); }
   } else if (state.walking) updateWalk(dt);
   else { controls.update(); clampOrbit(); }
+  updateCutaway(dt);
   renderer.render(scene, camera);
   renderOutline();
   labelRenderer.render(scene, camera);
 });
 controls.addEventListener('start', () => { stopTour(); state.fly = null; setActivePreset(null); closePopovers(); });
 
-if (new URLSearchParams(location.search).has('debug')) window.b10 = { camera, controls, layers, zones, labelObjs, state, blockAt, focusBlock, go, setHoverBlock, scene, renderer, renderOutline };
+if (new URLSearchParams(location.search).has('debug')) window.b10 = { camera, controls, layers, zones, labelObjs, state, cut, blockAt, focusBlock, go, setHoverBlock, scene, renderer, renderOutline };
 boot();
