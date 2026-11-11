@@ -612,9 +612,33 @@ function stopOrbitMomentum() {
   controls._panOffset?.set(0, 0, 0);
   if ('_scale' in controls) controls._scale = 1;
 }
+// Bring an orbit pose inside the limits clampOrbit() enforces every frame, so a flight ends exactly
+// where the camera will stay (otherwise e.g. the Overview, framed from farther out than the camera
+// box allows, snapped ~3 m closer on the first frame after landing). The camera is pulled in along
+// its line of sight, so the view direction doesn't change.
+function fitPoseToLimits(pose) {
+  if (pose.walk || !walkBox || !camBox) return pose;
+  const target = pose.target.clone();
+  target.x = THREE.MathUtils.clamp(target.x, walkBox.min.x, walkBox.max.x);
+  target.z = THREE.MathUtils.clamp(target.z, walkBox.min.z, walkBox.max.z);
+  target.y = THREE.MathUtils.clamp(target.y, floorY - 0.5, floorY + 12);
+  const pos = pose.pos.clone().add(target.clone().sub(pose.target));
+  if (!camBox.containsPoint(pos)) {
+    const off = pos.clone().sub(target);
+    let lo = 0, hi = 1;                               // largest fraction of the offset that stays inside
+    for (let i = 0; i < 30; i++) {
+      const mid = (lo + hi) / 2;
+      if (camBox.containsPoint(target.clone().addScaledVector(off, mid))) lo = mid; else hi = mid;
+    }
+    pos.copy(target).addScaledVector(off, lo);
+    if (!camBox.containsPoint(pos)) camBox.clampPoint(pos, pos);
+  }
+  return { ...pose, pos, target };
+}
 function goTo(pose, dur = 1.3, after) {
   if (state.walking && !pose.walk) exitWalk(false);
   stopOrbitMomentum();
+  pose = fitPoseToLimits(pose);
   if (dur <= 0) {
     camera.position.copy(pose.pos); controls.target.copy(pose.target); camera.lookAt(pose.target);
     controls.update(); after?.(); return;
@@ -1432,5 +1456,5 @@ renderer.setAnimationLoop(() => {
 });
 controls.addEventListener('start', () => { stopTour(); state.fly = null; setActivePreset(null); closePopovers(); });
 
-if (new URLSearchParams(location.search).has('debug')) window.b10 = { camera, controls, layers, zones, labelObjs, state, cut, blockAt, focusBlock, go, setHoverBlock, scene, renderer, renderOutline };
+if (new URLSearchParams(location.search).has('debug')) window.b10 = { camera, controls, layers, zones, labelObjs, state, cut, poses, zonePose, fitPoseToLimits, clampOrbit, blockAt, focusBlock, go, setHoverBlock, scene, renderer, renderOutline };
 boot();
