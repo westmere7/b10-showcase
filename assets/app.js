@@ -83,7 +83,10 @@ function fitShadow() {
   redrawShadows();
 }
 
-const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 800);
+const ORBIT_FOV = 50;                              // degrees (vertical)
+const WALK_FOV = { min: 30, max: 100, start: 60 }; // walk mode: a bit wider than orbit; the mouse wheel zooms
+let walkFov = WALK_FOV.start;                      // kept between walks
+const camera = new THREE.PerspectiveCamera(ORBIT_FOV, 1, 0.05, 800);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
@@ -678,6 +681,7 @@ function enterWalk() {
   const dir = new THREE.Vector3(); camera.getWorldDirection(dir);
   walk.yaw = Math.atan2(-dir.x, -dir.z);
   walk.pitch = 0;
+  setFov(walkFov);
   camera.position.y = floorY + EYE;
   clampWalk(camera.position);
   stage.classList.add('walking');
@@ -687,11 +691,21 @@ function enterWalk() {
   buildNavpad();
   history.replaceState(null, '', '#walk');
 }
+function setFov(deg) {
+  camera.fov = deg;
+  camera.updateProjectionMatrix();
+}
+// walk mode: zoom by narrowing / widening the field of view (wheel up = zoom in)
+function zoomWalkFov(stepDeg) {
+  walkFov = THREE.MathUtils.clamp(walkFov + stepDeg, WALK_FOV.min, WALK_FOV.max);
+  setFov(walkFov);
+}
 function exitWalk(reframe = true) {
   if (!state.walking) return;
   state.walking = false;
   walk.target = null; marker.visible = false; walk.keys.clear();
   if (isLocked()) document.exitPointerLock();
+  setFov(ORBIT_FOV);                // before reframing: the orbit poses are fitted with this FOV
   stage.classList.remove('walking');
   $('#btn-walk').classList.remove('active');
   applyVisibility();            // roof off
@@ -730,10 +744,8 @@ function updateWalk(dt) {
   const k = walk.keys;
   if (k.has('KeyW') || k.has('ArrowUp')) move.add(fwd);
   if (k.has('KeyS') || k.has('ArrowDown')) move.sub(fwd);
-  if (k.has('KeyD')) move.add(right);
-  if (k.has('KeyA')) move.sub(right);
-  if (k.has('ArrowLeft')) walk.yaw += 1.6 * dt;
-  if (k.has('ArrowRight')) walk.yaw -= 1.6 * dt;
+  if (k.has('KeyD') || k.has('ArrowRight')) move.add(right);   // arrows work exactly like WASD
+  if (k.has('KeyA') || k.has('ArrowLeft')) move.sub(right);
   if (walk.pad.move) move.addScaledVector(fwd, walk.pad.move);
   if (walk.pad.turn) walk.yaw -= walk.pad.turn * 1.4 * dt;
   const speed = k.has('ShiftLeft') || k.has('ShiftRight') ? RUN_SPEED : WALK_SPEED;
@@ -1019,7 +1031,7 @@ function focusBlock(sel) {
 
 // ---- wheel / trackpad (handled here instead of OrbitControls, which treats every
 // two-finger swipe as zoom). Orbit: mouse wheel and pinch zoom, two-finger swipe moves around,
-// Safari's twist gesture rotates. Walk: wheel / swipe walks forward-back and turns.
+// Safari's twist gesture rotates. Walk: the mouse wheel zooms (field of view); a trackpad swipe walks and turns.
 function isMouseWheel(e) {
   if (e.deltaMode !== 0) return true;                       // line/page units: a wheel (Firefox)
   if (e.deltaX !== 0) return false;                         // sideways component: trackpad
@@ -1046,7 +1058,8 @@ stage.addEventListener('wheel', (e) => {     // on the parent, capture phase: ru
   if (state.fly) return;
   const px = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? canvas.clientHeight : 1;
   const dx = e.deltaX * px, dy = e.deltaY * px;
-  if (state.walking) {
+  if (state.walking && isMouseWheel(e)) { zoomWalkFov(Math.sign(dy) * 5); return; }   // mouse wheel: field of view
+  if (state.walking) {                                       // trackpad swipe: walk and turn
     const fwd = V3(-Math.sin(walk.yaw), 0, -Math.cos(walk.yaw));
     camera.position.addScaledVector(fwd, THREE.MathUtils.clamp(-dy * 0.01, -1, 1));
     walk.yaw -= dx * 0.003;
@@ -1090,8 +1103,8 @@ window.addEventListener('keydown', (e) => {
   // outside walk mode: Esc goes back to the overview, Space to the top-down view
   if (!state.walking && e.code === 'Escape') go('overview');
   if (!state.walking && e.code === 'Space' && !e.target.closest('button, a, select')) { e.preventDefault(); go('top'); }
-  if (!state.walking && (e.key === '+' || e.key === '=')) flyForward(1);
-  if (!state.walking && (e.key === '-' || e.key === '_')) flyForward(-1);
+  if (e.key === '+' || e.key === '=') { if (state.walking) zoomWalkFov(-5); else flyForward(1); }
+  if (e.key === '-' || e.key === '_') { if (state.walking) zoomWalkFov(5); else flyForward(-1); }
   if (e.code === 'KeyV') toggleWalk();
   if (e.code === 'KeyL') setShadows(!state.shadows);
   if (e.code === 'KeyT' && !state.walking) startTour('hall');
@@ -1461,5 +1474,5 @@ renderer.setAnimationLoop(() => {
 });
 controls.addEventListener('start', () => { stopTour(); state.fly = null; setActivePreset(null); closePopovers(); });
 
-if (new URLSearchParams(location.search).has('debug')) window.b10 = { camera, controls, layers, zones, labelObjs, state, cut, poses, zonePose, fitPoseToLimits, clampOrbit, blockAt, focusBlock, go, setHoverBlock, scene, renderer, renderOutline };
+if (new URLSearchParams(location.search).has('debug')) window.b10 = { camera, controls, layers, zones, labelObjs, state, cut, walk, enterWalk, exitWalk, poses, zonePose, fitPoseToLimits, clampOrbit, blockAt, focusBlock, go, setHoverBlock, scene, renderer, renderOutline };
 boot();
