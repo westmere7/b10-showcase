@@ -32,7 +32,7 @@ const canvas = renderer.domElement;
 canvas.tabIndex = 0;
 
 const labelRenderer = new CSS2DRenderer();
-labelRenderer.domElement.className = 'labels';
+labelRenderer.domElement.className = 'labels hide-labels';   // school labels start hidden (Show / hide menu)
 stage.appendChild(labelRenderer.domElement);
 
 const scene = new THREE.Scene();
@@ -1050,6 +1050,9 @@ window.addEventListener('keydown', (e) => {
   }
   const map = { Digit1: 'overview', Digit2: 'top', Digit3: 'zone1', Digit4: 'zone2', Digit5: 'zone3' };
   if (map[e.code]) go(map[e.code]);
+  // outside walk mode: Esc goes back to the overview, Space to the top-down view
+  if (!state.walking && e.code === 'Escape') go('overview');
+  if (!state.walking && e.code === 'Space' && !e.target.closest('button, a, select')) { e.preventDefault(); go('top'); }
   if (!state.walking && (e.key === '+' || e.key === '=')) flyForward(1);
   if (!state.walking && (e.key === '-' || e.key === '_')) flyForward(-1);
   if (e.code === 'KeyV') toggleWalk();
@@ -1265,6 +1268,7 @@ function buildUI() {
   };
   add('Schools', man.layers.filter((l) => l.zone));
   add('Guides', man.layers.filter((l) => l.id === 'guides'));
+  $('#opt-labels').checked = false;                // browsers restore form state on reload; labels always start hidden
   $('#opt-labels').addEventListener('change', (e) => labelRenderer.domElement.classList.toggle('hide-labels', !e.target.checked));
 
   // tint by school (Solid mode only)
