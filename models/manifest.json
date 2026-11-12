@@ -1,6 +1,6 @@
 {
-  "generated": "2026-11-11 17:57",
-  "version": 1794394637,
+  "generated": "2026-11-12 17:03",
+  "version": 1794477799,
   "source": "EXPday26_web.blend",
   "layers": [
     {
@@ -33,7 +33,7 @@
       "group": "school",
       "visible": true,
       "file": "models/sset.glb",
-      "bytes": 9322784,
+      "bytes": 9959704,
       "zone": 1
     },
     {
@@ -42,7 +42,7 @@
       "group": "school",
       "visible": true,
       "file": "models/scd.glb",
-      "bytes": 7929192,
+      "bytes": 7927480,
       "zone": 2
     },
     {
@@ -51,7 +51,7 @@
       "group": "school",
       "visible": true,
       "file": "models/tbs.glb",
-      "bytes": 10088852,
+      "bytes": 10088824,
       "zone": 3
     },
     {
