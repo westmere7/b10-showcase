@@ -431,6 +431,7 @@ function addLayer(entry, root) {
     }
     if (merged && geos.length > 1) geos.forEach((g) => g.dispose());
   }
+  if (blockOf) mergeSmallBlocks(blocks);
   scene.add(group);
   layers[entry.id] = { entry, group, meshes, blocks };
   if (entry.zone) placeLabel(entry.zone);
@@ -445,6 +446,37 @@ function addLayer(entry, root) {
 }
 
 const BLOCK_MAX = 8;   // metres: anything bigger is a whole zone / row, not one stand
+// Click-to-focus is for installations, not their components: a block smaller than SMALL_BLOCK
+// (a phone, laptop or screen on a table, a stool beside a counter) joins the bigger block it
+// touches, as long as the result still fits within BLOCK_MAX. Smallest first, so chains collapse.
+const SMALL_BLOCK = 1.2, BLOCK_TOUCH = 0.05;
+function mergeSmallBlocks(blocks) {
+  const sizeOf = (b) => { const s = b.box.getSize(V3()); return Math.max(s.x, s.y, s.z); };
+  const alive = new Set(blocks.keys());
+  const order = [...blocks.keys()].sort((a, c) => sizeOf(blocks[a]) - sizeOf(blocks[c]));
+  for (const i of order) {
+    const s = blocks[i];
+    if (!alive.has(i) || !s.pieces || sizeOf(s) >= SMALL_BLOCK) continue;
+    const grown = s.box.clone().expandByScalar(BLOCK_TOUCH);
+    let best = -1, bestScore = -1;
+    for (const j of alive) {
+      const t = blocks[j];
+      if (j === i || !t.pieces || sizeOf(t) <= sizeOf(s) || !grown.intersectsBox(t.box)) continue;
+      const u = t.box.clone().union(s.box).getSize(V3());
+      if (Math.max(u.x, u.y, u.z) > BLOCK_MAX) continue;
+      const o = grown.clone().intersect(t.box).getSize(V3());
+      const score = o.x * o.y * o.z + sizeOf(t) * 1e-6;          // most contact; ties: the bigger block
+      if (score > bestScore) { best = j; bestScore = score; }
+    }
+    if (best < 0) continue;
+    const t = blocks[best];
+    t.pieces.push(...s.pieces);
+    t.box.union(s.box);
+    alive.delete(i);
+  }
+  const keep = blocks.filter((_, i) => alive.has(i));
+  blocks.length = 0; blocks.push(...keep);
+}
 function makeBlockFinder(root, blocks) {
   const boxCache = new Map(), idOf = new Map();
   const boxOf = (n) => {
@@ -1115,7 +1147,7 @@ window.addEventListener('keydown', (e) => {
     walk.keys.add(e.code);
     if (e.code.startsWith('Arrow')) e.preventDefault();
   }
-  const map = { Digit1: 'overview', Digit2: 'top', Digit3: 'zone1', Digit4: 'zone2', Digit5: 'zone3' };
+  const map = { Digit1: 'zone1', Digit2: 'zone2', Digit3: 'zone3', Numpad1: 'zone1', Numpad2: 'zone2', Numpad3: 'zone3' };   // SSET, SCD, TBS
   if (map[e.code]) go(map[e.code]);
   // outside walk mode: Esc goes back to the overview, Space to the top-down view
   if (!state.walking && e.code === 'Escape') go('overview');
@@ -1270,9 +1302,9 @@ document.addEventListener('pointerdown', (e) => {
 function buildUI() {
   // left rail: views
   const presets = [
-    { id: 'overview', label: 'Overview', ico: 'home', tip: 'Overview of the hall (1)' },
-    { id: 'top', label: 'Top', ico: 'top', tip: 'Top-down floor plan (2)' },
-    ...man.zones.map((z, i) => ({ id: `zone${z.id}`, label: z.short, zone: z, tip: `${z.short} (${i + 3})` })),
+    { id: 'overview', label: 'Overview', ico: 'home', tip: 'Overview of the hall (Esc)' },
+    { id: 'top', label: 'Top', ico: 'top', tip: 'Top-down floor plan (Space)' },
+    ...man.zones.map((z, i) => ({ id: `zone${z.id}`, label: z.short, zone: z, tip: `${z.short} (${i + 1})` })),
     { id: 'entrance', label: 'Entrance', ico: 'door', tip: 'Stand at the entrance in walk mode' },
   ];
   const box = $('#presets');
