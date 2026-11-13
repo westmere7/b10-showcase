@@ -449,7 +449,7 @@ function addLayer(entry, root) {
       if (!z) continue;
       m.userData.zoneId = z.id; m.userData.fill = /Fill/.test(m.material.name);
       // on the navy floor the zones need lighter, stronger colours than the file's (made for grey)
-      if (m.userData.fill) { m.material.color.set(z.colour).offsetHSL(0, 0.12, 0.1); m.material.opacity = 0.5; }
+      if (m.userData.fill) { m.material.color.set(z.colour).offsetHSL(0, 0.12, 0.1); m.material.opacity = 0.14; }   // just a hint
       else m.material.color.set(z.colour).offsetHSL(0, 0.05, 0.16);
       m.userData.baseOpacity = m.material.opacity;
     }
