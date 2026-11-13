@@ -7,7 +7,7 @@
   <meta name="description" content="Interactive 3D floor plan of the B10 sports hall showcase for RMIT Vietnam Experience Day 2026, covering SSET, SCD and TBS.">
   <meta name="theme-color" content="#000054">
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-  <link rel="stylesheet" href="assets/style.css?v=20261113c">
+  <link rel="stylesheet" href="assets/style.css?v=20261113d">
   <script type="importmap">
     {
       "imports": {
@@ -63,8 +63,7 @@
     </div>
     <span class="sep"></span>
     <button class="tool" id="btn-shadows" data-tip="Shadows (L)" data-tip-pos="below" aria-pressed="true"><svg><use href="#i-sun"/></svg></button>
-    <button class="tool" id="btn-layers" data-tip="Show / hide" data-tip-pos="below" aria-haspopup="dialog" aria-controls="pop-layers"><svg><use href="#i-layers"/></svg></button>
-    <button class="tool" id="btn-tint" data-tip="Tint by school" data-tip-pos="below" aria-haspopup="dialog" aria-controls="pop-tint"><svg><use href="#i-palette"/></svg></button>
+    <button class="tool" id="btn-layers" data-tip="Display: show / hide, tint" data-tip-pos="below" aria-haspopup="dialog" aria-controls="pop-layers"><svg><use href="#i-layers"/></svg></button>
     <button class="tool" id="btn-photo" data-tip="Save photo (C)" data-tip-pos="below" aria-haspopup="dialog"><svg><use href="#i-camera"/></svg></button>
     <button class="tool" id="btn-help" data-tip="How to navigate" data-tip-pos="below"><svg><use href="#i-help"/></svg></button>
   </div>
@@ -81,19 +80,16 @@
   <div class="pop flyout" id="tour-menu" role="menu" hidden></div>
 
   <!-- popovers -->
-  <section class="pop" id="pop-layers" hidden aria-label="Show and hide">
-    <header><h2>Show / hide</h2><button class="tool sm" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></header>
+  <section class="pop" id="pop-layers" hidden aria-label="Display">
+    <header><h2>Display</h2><button class="tool sm" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></header>
     <div id="layer-list"></div>
     <label class="row"><span>School labels</span><input type="checkbox" class="switch" id="opt-labels"></label>
-    <p class="updated" id="updated"></p>
-  </section>
-
-  <section class="pop" id="pop-tint" hidden aria-label="Tint by school">
-    <header><h2>Tint by school</h2><button class="tool sm" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></header>
+    <h3>Tint by school</h3>
     <label class="row"><span>Tint models</span><input type="checkbox" class="switch" id="opt-tint"></label>
     <p class="note" id="tint-note">Tint is shown in <b>Solid</b> mode. Turning it on switches to Solid.</p>
     <div id="tint-colours" class="tint-list"></div>
     <label class="row slider"><span>Strength</span><input type="range" id="opt-tint-strength" min="0.15" max="1" step="0.05" value="0.6"></label>
+    <p class="updated" id="updated"></p>
   </section>
 
   <!-- bottom-right: camera / walk controls -->
@@ -181,6 +177,6 @@
   </dialog>
 
   <noscript><p class="noscript">This 3D viewer needs JavaScript and a browser that supports WebGL.</p></noscript>
-  <script type="module" src="assets/app.js?v=20261113c"></script>
+  <script type="module" src="assets/app.js?v=20261113d"></script>
 </body>
 </html>

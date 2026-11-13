@@ -16,6 +16,7 @@ const V3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const EYE = 1.7;                                   // walk-mode eye height (m)
 const WALK_SPEED = 1.6, RUN_SPEED = 4.0;
 const SOLID_GREY = new THREE.Color('#b9bcc6');
+const FLOOR_MAT = 'MainZoneAfterOffset', FLOOR_COLOUR = '#000054';   // the showcase floor, in RMIT navy
 const USER_LAYERS = new Set(['sset', 'scd', 'tbs', 'guides']);   // the only layers visitors can toggle
 const ROOF = 'roof';                               // shown in walk mode only
 const icon = (id) => `<svg><use href="#i-${id}"/></svg>`;
@@ -371,6 +372,11 @@ function addLayer(entry, root) {
     // "[1-sided]": SketchUp faces painted differently on each side arrive as two overlapping
     // one-sided copies, which would flicker against each other if both were drawn two-sided.
     o.material.side = o.material.name?.includes('[1-sided]') ? THREE.FrontSide : THREE.DoubleSide;
+    if (o.material.name === FLOOR_MAT && !o.material.userData.keepColour) {   // showcase floor: RMIT navy
+      o.material.color.set(FLOOR_COLOUR);
+      o.material.roughness = 0.75; o.material.metalness = 0;
+      o.material.userData.keepColour = true;        // stays navy in Solid mode too
+    }
     const g = o.geometry;
     const sig = Object.keys(g.attributes).sort()
       .map((k) => `${k}:${g.attributes[k].itemSize}:${g.attributes[k].normalized}:${g.attributes[k].array.constructor.name}`)
@@ -440,7 +446,12 @@ function addLayer(entry, root) {
     // tag each guide mesh with its school (materials are named ZoneFill_<SHORT> / ZoneBorder_<SHORT>)
     for (const m of meshes) {
       const z = man.zones.find((x) => (m.material.name || '').endsWith(`_${x.short}`));
-      if (z) { m.userData.zoneId = z.id; m.userData.fill = /Fill/.test(m.material.name); m.userData.baseOpacity = m.material.opacity; }
+      if (!z) continue;
+      m.userData.zoneId = z.id; m.userData.fill = /Fill/.test(m.material.name);
+      // on the navy floor the zones need lighter, stronger colours than the file's (made for grey)
+      if (m.userData.fill) { m.material.color.set(z.colour).offsetHSL(0, 0.12, 0.1); m.material.opacity = 0.5; }
+      else m.material.color.set(z.colour).offsetHSL(0, 0.05, 0.16);
+      m.userData.baseOpacity = m.material.opacity;
     }
   }
   applyVisibility();
@@ -548,7 +559,8 @@ function tintFor(layerId) {
 function solidMaterial(orig, tint) {
   const key = `solid|${orig.uuid}|${tint ? tint.getHexString() : '-'}|${state.tint.strength}`;
   if (!matCache.has(key)) {
-    const colour = tint ? SOLID_GREY.clone().lerp(tint, state.tint.strength) : SOLID_GREY.clone();
+    const colour = orig.userData.keepColour ? orig.color.clone()
+      : tint ? SOLID_GREY.clone().lerp(tint, state.tint.strength) : SOLID_GREY.clone();
     let m;
     if (orig.alphaTest > 0 && orig.map) {           // keep cut-outs (e.g. perforated plating)
       m = orig.clone(); m.color.copy(colour); m.metalness = 0; m.roughness = 0.85;
@@ -1264,7 +1276,6 @@ function updateTour(dt) {
 // ------------------------------------------------------------------ popovers
 const popovers = [
   { btn: '#btn-layers', pop: '#pop-layers' },
-  { btn: '#btn-tint', pop: '#pop-tint' },
   { btn: '#btn-tour', pop: '#tour-menu', side: 'right' },
 ];
 function closePopovers() {
@@ -1341,13 +1352,12 @@ function buildUI() {
   $('#btn-tour').addEventListener('click', (e) => {
     e.stopPropagation();
     if (state.tour) { stopTour(); controls.update(); return; }
-    togglePopover(popovers[2]);
+    togglePopover(popovers[1]);
   });
   $('#tour-stop').addEventListener('click', () => { stopTour(); controls.update(); });
 
   // top-right actions
   $('#btn-layers').addEventListener('click', () => togglePopover(popovers[0]));
-  $('#btn-tint').addEventListener('click', () => togglePopover(popovers[1]));
   $$('[data-close]').forEach((b) => b.addEventListener('click', closePopovers));
   $('#btn-help').addEventListener('click', () => { closePopovers(); $('#help').showModal(); });
   setupPhoto();
@@ -1405,7 +1415,6 @@ function syncTintUI() {
   $('#tint-colours').classList.toggle('disabled', off);
   $('#opt-tint-strength').closest('.row').classList.toggle('disabled', off);
   $('#tint-note').hidden = state.shading === 'solid' && state.tint.on;
-  $('#btn-tint').classList.toggle('active', state.tint.on && state.shading === 'solid');
 }
 
 function setActivePreset(name) {
