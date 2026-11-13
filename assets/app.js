@@ -782,7 +782,7 @@ function applyHash() {
 
 // ------------------------------------------------------------------ walk mode
 const walk = { yaw: 0, pitch: 0, height: EYE, keys: new Set(), target: null, drag: null, pad: { move: 0, turn: 0 } };
-const FLY_MAX = 15;                               // video mode: Q / E fly down / up, from eye level to this (m), under the roof
+const FLY_MAX = 12;                               // video mode: Q / E fly down / up, from eye level to this (m), below the roof trusses (~12.8 m)
 const marker = new THREE.Mesh(new THREE.RingGeometry(0.22, 0.32, 40), new THREE.MeshBasicMaterial({ color: 0xE60028, transparent: true, opacity: 0.9, depthTest: false }));
 marker.rotation.x = -Math.PI / 2; marker.visible = false; marker.renderOrder = 10; scene.add(marker);
 
