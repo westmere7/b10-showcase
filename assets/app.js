@@ -2105,20 +2105,28 @@ function savePathFile() {
 function loadMuxer() { return (video.muxer ||= import(MP4_MUXER).catch((e) => { video.muxer = null; throw e; })); }
 
 // ---- rendering: every frame drawn at full quality (2x supersampled up to 1080p), encoded with
-// the browser's own video encoder (WebCodecs) and packed into an MP4
-async function pickCodec(w, h, fps) {
+// the browser's own video encoder (WebCodecs) and packed into an MP4.
+// The software encoder comes first: some graphics cards' hardware H.264 encoders silently drop
+// frames when they are fed faster than real time (a 30 fps render came out at 15 fps). Every
+// encoded frame is checked as it comes out; if any is missing, the next encoder is tried.
+async function codecChoices(w, h, fps) {
   const bitrate = Math.round(THREE.MathUtils.clamp(w * h * fps * 0.24, 8e6, 80e6));
   const mbs = Math.ceil(w / 16) * Math.ceil(h / 16), rate = mbs * fps;
   const levels = [[0x1F, 3600, 108000], [0x20, 5120, 216000], [0x28, 8192, 245760], [0x2A, 8704, 522240],
     [0x32, 22080, 589824], [0x33, 36864, 983040], [0x34, 36864, 2073600], [0x3C, 139264, 4177920]];
   const avc = levels.filter(([, f, r]) => mbs <= f && rate <= r).slice(0, 2)
     .map(([l]) => [`avc1.6400${l.toString(16).toUpperCase().padStart(2, '0')}`, 'avc']);
-  const candidates = [...avc, ['vp09.00.51.08', 'vp9'], ['av01.0.12M.08', 'av1']];
-  for (const [codec, mux] of candidates) {
-    const config = { codec, width: w, height: h, bitrate, framerate: fps, latencyMode: 'quality', ...(mux === 'avc' ? { avc: { format: 'avc' } } : {}) };
-    try { if ((await VideoEncoder.isConfigSupported(config)).supported) return { config, mux }; } catch { /* try the next */ }
+  const out = [];
+  for (const [list, accel] of [[avc, 'prefer-software'], [avc, 'no-preference'],
+    [[['vp09.00.51.08', 'vp9']], 'prefer-software'], [[['vp09.00.51.08', 'vp9']], 'no-preference'], [[['av01.0.12M.08', 'av1']], 'no-preference']]) {
+    for (const [codec, mux] of list) {
+      const config = { codec, width: w, height: h, bitrate, framerate: fps, latencyMode: 'quality', hardwareAcceleration: accel, ...(mux === 'avc' ? { avc: { format: 'avc' } } : {}) };
+      try {
+        if ((await VideoEncoder.isConfigSupported(config)).supported) { out.push({ config, mux }); break; }   // one level per kind is enough
+      } catch { /* try the next */ }
+    }
   }
-  return null;
+  return out;
 }
 async function renderVideo() {
   if (state.exporting || !video.on || video.phase !== 'review' || video.keys.length < 2) return;
@@ -2132,66 +2140,90 @@ async function renderVideo() {
   say('Preparing…');
   let Mp4;
   try { Mp4 = await loadMuxer(); } catch { say('Couldn’t load the video writer. Check the internet connection and try again.'); return; }
-  const codec = await pickCodec(w, h, fps);
-  if (!codec) { say(`This browser can’t encode ${w} × ${h} video. Try a smaller size.`); return; }
+  const choices = await codecChoices(w, h, fps);
+  if (!choices.length) { say(`This browser can’t encode ${w} × ${h} video. Try a smaller size.`); return; }
 
   const gl = renderer.getContext();
   const maxSide = Math.min(gl.getParameter(gl.MAX_RENDERBUFFER_SIZE), gl.getParameter(gl.MAX_VIEWPORT_DIMS)[0], 4096);
   const ss = Math.max(w, h) * 2 <= maxSide ? 2 : 1;  // supersample when it fits
   const path = buildPath(video.keys, VIDEO.speed);
   const frames = Math.max(2, Math.round(path.duration * fps));
+  const stamp = (f) => Math.round((f * 1e6) / fps);
   const out = document.createElement('canvas'); out.width = w; out.height = h;
   const ctx = out.getContext('2d', { alpha: false });
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
-
-  const muxer = new Mp4.Muxer({ target: new Mp4.ArrayBufferTarget(), video: { codec: codec.mux, width: w, height: h, frameRate: fps }, fastStart: 'in-memory', firstTimestampBehavior: 'offset' });
-  let encErr = null;
-  const encoder = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: (e) => { encErr = e; } });
-  encoder.configure(codec.config);
 
   state.exporting = true; video.cancel = false;
   const playing = video.play; video.play = null;
   dlg.classList.add('busy');
   $('#video-render').disabled = $('#video-back').disabled = true;
   $('#video-cancel').hidden = false;
-  bar.hidden = false; barFill.style.width = '0';
+  bar.hidden = false;
   const savedRatio = renderer.getPixelRatio();
-  let error = null, done = 0;
-  const t0 = performance.now();
+  let error = null, muxer = null;
+
+  // one full pass with one encoder; resolves to the finished muxer, or null if the encoder dropped frames
+  const encodePass = async (codec) => {
+    const mx = new Mp4.Muxer({ target: new Mp4.ArrayBufferTarget(), video: { codec: codec.mux, width: w, height: h, frameRate: fps }, fastStart: 'in-memory', firstTimestampBehavior: 'offset' });
+    let encErr = null, outCount = 0, dropped = false;
+    const encoder = new VideoEncoder({
+      output: (chunk, meta) => {
+        if (chunk.timestamp !== stamp(outCount)) dropped = true;   // a frame went missing
+        outCount++;
+        if (!dropped) mx.addVideoChunk(chunk, meta);
+      },
+      error: (e) => { encErr = e; },
+    });
+    encoder.configure(codec.config);
+    barFill.style.width = '0';
+    const t0 = performance.now();
+    try {
+      for (let f = 0; f < frames; f++) {
+        if (video.cancel || dropped) break;
+        if (encErr) throw encErr;
+        applyPose(path.at(f / fps, _pose));
+        renderer.setRenderTarget(null);
+        renderer.render(scene, camera);
+        ctx.drawImage(canvas, 0, 0, w * ss, h * ss, 0, 0, w, h);    // same task as the draw: still there
+        const frame = new VideoFrame(out, { timestamp: stamp(f), duration: Math.round(1e6 / fps) });
+        encoder.encode(frame, { keyFrame: f % (fps * 2) === 0 });
+        frame.close();
+        while (encoder.encodeQueueSize > 4 && !encErr) await new Promise((r) => setTimeout(r, 2));
+        if (f % 3 === 0 || f === frames - 1) {
+          const done = f + 1, left = ((performance.now() - t0) / done) * (frames - done) / 1000;
+          barFill.style.width = `${((done / frames) * 100).toFixed(1)}%`;
+          prog.hidden = false;
+          prog.textContent = `Rendering… frame ${done} of ${frames}` + (done > 10 ? ` · about ${fmtTime(Math.max(1, left))} left` : '');
+          await nextTask();
+        }
+      }
+      if (video.cancel || dropped) return null;
+      prog.textContent = 'Finishing…';
+      await encoder.flush();
+      if (encErr) throw encErr;
+      if (dropped || outCount !== frames) { dropped = true; return null; }
+      mx.finalize();
+      return mx;
+    } finally {
+      try { if (encoder.state !== 'closed') encoder.close(); } catch { /* already closed */ }
+    }
+  };
+
   try {
     renderer.setPixelRatio(1);
     renderer.setSize(w * ss, h * ss, false);         // the on-screen canvas keeps its size: it shows the frames
     camera.aspect = w / h;
-    for (let f = 0; f < frames; f++) {
-      if (video.cancel) break;
-      if (encErr) throw encErr;
-      applyPose(path.at(f / fps, _pose));
-      renderer.setRenderTarget(null);
-      renderer.render(scene, camera);
-      ctx.drawImage(canvas, 0, 0, w * ss, h * ss, 0, 0, w, h);    // same task as the draw: still there
-      const frame = new VideoFrame(out, { timestamp: Math.round((f * 1e6) / fps), duration: Math.round(1e6 / fps) });
-      encoder.encode(frame, { keyFrame: f % (fps * 2) === 0 });
-      frame.close();
-      done = f + 1;
-      while (encoder.encodeQueueSize > 4 && !encErr) await new Promise((r) => setTimeout(r, 2));
-      if (f % 3 === 0 || f === frames - 1) {
-        const pct = done / frames, left = ((performance.now() - t0) / done) * (frames - done) / 1000;
-        barFill.style.width = `${(pct * 100).toFixed(1)}%`;
-        prog.hidden = false;
-        prog.textContent = `Rendering… frame ${done} of ${frames}` + (done > 10 ? ` · about ${fmtTime(Math.max(1, left))} left` : '');
-        await nextTask();
-      }
+    for (const codec of choices) {
+      muxer = await encodePass(codec);
+      if (muxer || video.cancel) break;
+      console.warn('video export: the encoder dropped frames, trying the next one', codec.config);
+      say('That encoder skipped frames: trying another one…');
+      await nextTask();
     }
-    if (!video.cancel) {
-      prog.textContent = 'Finishing…';
-      await encoder.flush();
-      if (encErr) throw encErr;
-      muxer.finalize();
-    }
+    if (!muxer && !video.cancel) throw new Error('every available encoder skipped frames');
   } catch (e) {
     error = e;
   } finally {
-    try { if (encoder.state !== 'closed') encoder.close(); } catch { /* already closed */ }
     renderer.setPixelRatio(savedRatio);
     resize();
     state.exporting = false;
