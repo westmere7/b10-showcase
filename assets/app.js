@@ -115,6 +115,7 @@ const state = {
   shadows: (() => { try { return localStorage.getItem('b10-shadows') !== '0'; } catch { return true; } })(),
   walking: false,
   loading: true,     // no rendering until the models are in and their shaders are built
+  exporting: false,  // a photo is being rendered (the render loop pauses)
   tour: null,
   fly: null,
 };
@@ -1156,6 +1157,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key === '-' || e.key === '_') { if (state.walking) zoomWalkFov(5); else flyForward(-1); }
   if (e.code === 'KeyV') toggleWalk();
   if (e.code === 'KeyL') setShadows(!state.shadows);
+  if (e.code === 'KeyC' && !e.ctrlKey && !e.metaKey && !e.altKey) openPhoto();
   if (e.code === 'KeyT' && !state.walking) startTour('hall');
 });
 window.addEventListener('keyup', (e) => walk.keys.delete(e.code));
@@ -1346,6 +1348,7 @@ function buildUI() {
   $('#btn-tint').addEventListener('click', () => togglePopover(popovers[1]));
   $$('[data-close]').forEach((b) => b.addEventListener('click', closePopovers));
   $('#btn-help').addEventListener('click', () => { closePopovers(); $('#help').showModal(); });
+  setupPhoto();
   $('#btn-shadows').addEventListener('click', () => setShadows(!state.shadows));
   applyShadows();
   $$('[data-shading]').forEach((b) => b.addEventListener('click', () => setShading(b.dataset.shading)));
@@ -1500,11 +1503,128 @@ function clampOrbit() {
   if (camBox) camBox.clampPoint(camera.position, camera.position);
 }
 
+// ------------------------------------------------------------------ photo export
+// Saves the current view (any mode, walk included) as an image up to 4x the on-screen size.
+// Always at the highest quality: it is drawn through the same pipeline as the screen (tone
+// mapping, shadows, glass, multisample anti-aliasing) at SSAA x the final resolution, in tiles,
+// then scaled down. The screen canvas is used for the tiles (an offscreen target would skip the
+// screen's tone mapping / colour conversion), hidden behind the dialog while it works.
+// Labels, outlines and toolbars are HTML on top of the 3D view, so they are not in the photo.
+const PHOTO = { scale: 2, format: 'png' };
+const PHOTO_SSAA = 2;                       // supersampling: rendered at 2x, scaled down
+const PHOTO_TILE = 2048;                    // tile size in device pixels
+const PHOTO_MAX_SIDE = 16384, PHOTO_MAX_AREA = 120e6;   // what browsers can hold in one canvas
+function photoSize(scale) {
+  const w = stage.clientWidth * scale, h = stage.clientHeight * scale;
+  const f = Math.min(1, PHOTO_MAX_SIDE / Math.max(w, h), Math.sqrt(PHOTO_MAX_AREA / (w * h)));
+  return { w: Math.max(1, Math.floor(w * f)), h: Math.max(1, Math.floor(h * f)), capped: f < 1 };
+}
+function updatePhotoDialog() {
+  for (const b of $$('#photo-scale button')) b.setAttribute('aria-checked', String(Number(b.dataset.scale) === PHOTO.scale));
+  for (const b of $$('#photo-format button')) b.setAttribute('aria-checked', String(b.dataset.format === PHOTO.format));
+  const { w, h, capped } = photoSize(PHOTO.scale);
+  $('#photo-dims').textContent = `${w.toLocaleString()} × ${h.toLocaleString()} px` + (capped ? ' (the most this browser can save)' : '');
+}
+function openPhoto() {
+  if (state.loading || state.exporting || $('#photo').open) return;
+  if (isLocked()) document.exitPointerLock();
+  walk.keys.clear();
+  stopTour();
+  closePopovers();
+  updatePhotoDialog();
+  $('#photo-progress').hidden = true;
+  $('#photo').showModal();
+}
+function setupPhoto() {
+  try { const saved = JSON.parse(localStorage.getItem('b10-photo') || '{}'); Object.assign(PHOTO, saved); } catch { /* storage blocked */ }
+  const remember = () => { try { localStorage.setItem('b10-photo', JSON.stringify(PHOTO)); } catch { /* ignore */ } };
+  $('#btn-photo').addEventListener('click', openPhoto);
+  for (const b of $$('#photo-scale button')) b.addEventListener('click', () => { PHOTO.scale = Number(b.dataset.scale); remember(); updatePhotoDialog(); });
+  for (const b of $$('#photo-format button')) b.addEventListener('click', () => { PHOTO.format = b.dataset.format; remember(); updatePhotoDialog(); });
+  $('#photo-cancel').addEventListener('click', () => { if (!state.exporting) $('#photo').close(); });
+  $('#photo').addEventListener('cancel', (e) => { if (state.exporting) e.preventDefault(); });   // no Esc mid-render
+  $('#photo-save').addEventListener('click', savePhoto);
+}
+const nextTask = () => new Promise((r) => setTimeout(r, 0));
+async function savePhoto() {
+  if (state.exporting) return;
+  const dlg = $('#photo'), prog = $('#photo-progress');
+  const { w, h } = photoSize(PHOTO.scale);
+  const fullW = w * PHOTO_SSAA, fullH = h * PHOTO_SSAA, T = PHOTO_TILE;
+  const cols = Math.ceil(fullW / T), rows = Math.ceil(fullH / T);
+  state.exporting = true;
+  dlg.classList.add('busy');
+  prog.hidden = false;
+  prog.textContent = 'Rendering…';
+  await nextTask();
+  const out = document.createElement('canvas'); out.width = w; out.height = h;
+  const ctx = out.getContext('2d');
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  const tile = document.createElement('canvas'); tile.width = T; tile.height = T;
+  const tctx = tile.getContext('2d');
+  const img = tctx.createImageData(T, T), buf = new Uint8Array(T * T * 4);
+  const gl = renderer.getContext();
+  const savedRatio = renderer.getPixelRatio(), savedAspect = camera.aspect;
+  let error = null;
+  try {
+    renderer.setPixelRatio(1);
+    renderer.setSize(T, T, false);
+    camera.aspect = fullW / fullH;
+    let done = 0;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        camera.setViewOffset(fullW, fullH, c * T, r * T, T, T);
+        renderer.setRenderTarget(null);
+        renderer.render(scene, camera);
+        gl.readPixels(0, 0, T, T, gl.RGBA, gl.UNSIGNED_BYTE, buf);    // same task as the draw: still there
+        for (let y = 0; y < T; y++) img.data.set(buf.subarray((T - 1 - y) * T * 4, (T - y) * T * 4), y * T * 4);
+        tctx.putImageData(img, 0, 0);
+        ctx.drawImage(tile, (c * T) / PHOTO_SSAA, (r * T) / PHOTO_SSAA, T / PHOTO_SSAA, T / PHOTO_SSAA);
+        done++;
+        prog.textContent = `Rendering… ${Math.round((done / (rows * cols)) * 100)}%`;
+        await nextTask();
+      }
+    }
+  } catch (e) {
+    error = e;
+  } finally {
+    camera.clearViewOffset();
+    camera.aspect = savedAspect;
+    renderer.setPixelRatio(savedRatio);
+    resize();
+    state.exporting = false;
+  }
+  if (!error) {
+    prog.textContent = 'Saving…';
+    await nextTask();
+    const jpg = PHOTO.format === 'jpg';
+    const blob = await new Promise((res) => out.toBlob(res, jpg ? 'image/jpeg' : 'image/png', jpg ? 0.95 : undefined));
+    if (blob) {
+      const view = (location.hash.slice(1) || 'view').replace(/[^\w-]+/g, '');
+      const stamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-');
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `B10-Showcase_${view}_${w}x${h}_${stamp}.${jpg ? 'jpg' : 'png'}`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    } else error = new Error('the browser could not encode an image this large');
+  }
+  out.width = out.height = 0;                        // free the memory straight away
+  dlg.classList.remove('busy');
+  if (error) {
+    console.error('photo export', error);
+    prog.textContent = `Couldn't save the photo (${error.message || error}). Try a smaller size.`;
+  } else {
+    prog.hidden = true;
+    dlg.close();
+  }
+}
+
 // ------------------------------------------------------------------ loop
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1);
-  if (state.loading) return;
+  if (state.loading || state.exporting) return;
   if (state.tour) updateTour(dt);
   else if (state.fly) {
     const f = state.fly;

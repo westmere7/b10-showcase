@@ -186,6 +186,14 @@ input.switch:focus-visible { outline: 2px solid var(--rmit-red); outline-offset:
 .help-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0 20px; }
 .help form { margin-top: 18px; text-align: right; }
 .btn { border: 0; border-radius: 8px; padding: 9px 16px; font-weight: 600; background: var(--hover); }
+/* photo export */
+.photo { max-width: 380px; }
+.photo .row { margin-top: 6px; }
+.photo-dims { margin: 2px 0 4px; text-align: right; font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.photo-progress { margin: 10px 0 0; font-size: 13px; font-weight: 600; color: var(--rmit-navy); }
+.photo-actions { margin-top: 16px; display: flex; justify-content: flex-end; gap: 8px; }
+.photo.busy .row, .photo.busy .photo-actions { opacity: .4; pointer-events: none; }
+.photo.busy::backdrop { background: rgba(5, 0, 56, .94); }   /* hide the tiles being drawn behind it */
 .btn.primary { background: var(--rmit-navy); color: #fff; }
 .btn.primary:hover { background: #10107a; }
 .noscript { position: fixed; inset: 40% 0 auto; text-align: center; }

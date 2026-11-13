@@ -56,5 +56,6 @@ so visitors get the new models straight away instead of stale cached ones.
 - **Mac trackpad:** click-drag rotates, a two-finger swipe drags the view, a pinch moves forward and back, and a two-finger twist rotates (Safari).
 - **Walk mode:** 1.7 m eye height. Click the floor to walk there, drag to look, use WASD or the arrow keys to move, the mouse wheel (or + / −) to zoom the field of view, and press Esc to exit.
 - **Views:** Overview, Top, one per school, and Entrance (starts walk mode). Keys 1, 2 and 3 fly to SSET, SCD and TBS; outside walk mode, Esc returns to the Overview and Space switches to the top view. School labels start hidden; turn them on under Show / hide.
+- **Photos:** press <kbd>C</kbd> (or the camera button) in any view, walk mode included, to save the current view as a PNG or JPG at 1–4× the on-screen size. It is always rendered at the highest quality (anti-aliased and 2× supersampled); labels and toolbars are left out.
 - **Tours:** full hall orbit, all schools, or one school.
 - **Settings:** Material or Solid shading, sun shadows on or off (the sun button, or <kbd>L</kbd>), a per-school tint with colour pickers, and layer toggles for each school, the zone guides, the hall structure, the grandstands and the roof.
