@@ -1019,9 +1019,19 @@ function exitWalk(reframe = true) {
   }
   buildNavpad();
 }
+// Walking is kept to the showcase floor, plus a strip out through the entrance door (centred on
+// the red arrow): through the glass door and onto the outside apron, stopping short of its edge.
+// The eye stays at the hall's walking height, so stepping out never drops the view.
+const ENTRANCE = { half: 0.6, depth: 3.4 };       // m: half the strip's width; how far past the floor edge
 function clampWalk(p) {
   p.x = THREE.MathUtils.clamp(p.x, walkBox.min.x, walkBox.max.x);
-  p.z = THREE.MathUtils.clamp(p.z, walkBox.min.z, walkBox.max.z);
+  const cx = (walkBox.min.x + walkBox.max.x) / 2;
+  if (p.z > walkBox.max.z) {
+    // in (or stepping into) the doorway: stay within its width; anywhere else, the floor edge stops you
+    if (Math.abs(p.x - cx) <= ENTRANCE.half + 0.3) p.x = THREE.MathUtils.clamp(p.x, cx - ENTRANCE.half, cx + ENTRANCE.half);
+    else p.z = walkBox.max.z;
+  }
+  p.z = THREE.MathUtils.clamp(p.z, walkBox.min.z, walkBox.max.z + ENTRANCE.depth);
   p.y = floorY + walk.height;
 }
 
@@ -2520,5 +2530,5 @@ renderer.setAnimationLoop(() => {
 });
 controls.addEventListener('start', () => { stopTour(); state.fly = null; setActivePreset(null); closePopovers(); });
 
-if (new URLSearchParams(location.search).has('debug')) window.b10 = { camera, controls, layers, zones, labelObjs, state, cut, walk, enterWalk, exitWalk, poses, zonePose, fitPoseToLimits, clampOrbit, blockAt, focusBlock, go, setHoverBlock, scene, renderer, renderOutline, video, VIDEO, buildPath, startVideo, addKeyframe, finishPath, renderVideo, editPath, endVideo, updateWalk, watermarkCanvas, watermarkRect, WATERMARK, topv, enterTop, startTop, leaveTop, updateTop, topZoom, topPan, setTopIso, topFrame, topFit, toggleWalk };
+if (new URLSearchParams(location.search).has('debug')) window.b10 = { camera, controls, layers, zones, labelObjs, state, cut, walk, enterWalk, exitWalk, poses, zonePose, fitPoseToLimits, clampOrbit, blockAt, focusBlock, go, setHoverBlock, scene, renderer, renderOutline, clampWalk, video, VIDEO, buildPath, startVideo, addKeyframe, finishPath, renderVideo, editPath, endVideo, updateWalk, watermarkCanvas, watermarkRect, WATERMARK, topv, enterTop, startTop, leaveTop, updateTop, topZoom, topPan, setTopIso, topFrame, topFit, toggleWalk };
 boot();
