@@ -16,6 +16,15 @@ const V3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const EYE = 1.7;                                   // walk-mode eye height (m)
 const WALK_SPEED = 1.6, RUN_SPEED = 4.0;
 const SOLID_GREY = new THREE.Color('#b9bcc6');
+// zone overlays (the coloured school areas on the floor): opacity set with a slider in Display
+const ZONE_OPACITY = { start: 0.22, min: 0, max: 0.6 };
+let zoneOpacity = (() => { try { const v = parseFloat(localStorage.getItem('b10-zone-opacity')); return Number.isFinite(v) ? THREE.MathUtils.clamp(v, ZONE_OPACITY.min, ZONE_OPACITY.max) : ZONE_OPACITY.start; } catch { return ZONE_OPACITY.start; } })();
+const zoneHoverOpacity = (base) => Math.min(0.75, Math.max(base * 2, base + 0.15));   // hovering a zone: clearly stronger
+function setZoneOpacity(v) {
+  zoneOpacity = v;
+  for (const m of layers.guides?.meshes ?? []) if (m.userData.fill) { m.userData.baseOpacity = v; m.material.opacity = v; }
+  try { localStorage.setItem('b10-zone-opacity', String(v)); } catch { /* ignore */ }
+}
 const FLOOR_MAT = 'MainZoneAfterOffset', FLOOR_COLOUR = '#8f9097';   // the showcase floor: a little darker than the file's, so white stands read clearly
 const USER_LAYERS = new Set(['sset', 'scd', 'tbs', 'guides']);   // the only layers visitors can toggle
 const ROOF = 'roof';                               // shown in walk mode only
@@ -498,7 +507,7 @@ function addLayer(entry, root) {
       if (!z) continue;
       m.userData.zoneId = z.id; m.userData.fill = /Fill/.test(m.material.name);
       // vivid school colours on the darker floor
-      if (m.userData.fill) { m.material.color.set(z.colour).offsetHSL(0, 0.25, 0.02); m.material.opacity = 0.3; }
+      if (m.userData.fill) { m.material.color.set(z.colour).offsetHSL(0, 0.25, 0.02); m.material.opacity = zoneOpacity; }
       else m.material.color.set(z.colour).offsetHSL(0, 0.25, 0.08);
       m.userData.baseOpacity = m.material.opacity;
     }
@@ -998,7 +1007,7 @@ function setHoverZone(id) {
   hoverZone = id;
   stage.classList.toggle('zone-hover', !!(hoverZone || hoverBlock));
   for (const m of layers.guides?.meshes ?? []) {
-    if (m.userData.fill) m.material.opacity = m.userData.zoneId === id ? Math.min(0.65, m.userData.baseOpacity * 2.2) : m.userData.baseOpacity;
+    if (m.userData.fill) m.material.opacity = m.userData.zoneId === id ? zoneHoverOpacity(m.userData.baseOpacity) : m.userData.baseOpacity;
   }
   for (const [zid, obj] of Object.entries(labelObjs)) obj.element.classList.toggle('hot', String(zid) === String(id));
 }
@@ -1475,6 +1484,9 @@ function buildUI() {
   add('Guides', man.layers.filter((l) => l.id === 'guides'));
   $('#opt-labels').checked = false;                // browsers restore form state on reload; labels always start hidden
   $('#opt-labels').addEventListener('change', (e) => labelRenderer.domElement.classList.toggle('hide-labels', !e.target.checked));
+  const zo = $('#opt-zone-opacity');
+  zo.min = String(ZONE_OPACITY.min); zo.max = String(ZONE_OPACITY.max); zo.value = String(zoneOpacity);
+  zo.addEventListener('input', () => setZoneOpacity(Number(zo.value)));
 
   // tint by school (Solid mode only)
   const tintList = $('#tint-colours');
