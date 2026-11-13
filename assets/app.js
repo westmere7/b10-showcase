@@ -115,6 +115,7 @@ function resize() {
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
+  if (video.on) placeWatermarkPreview();
 }
 new ResizeObserver(resize).observe(stage);
 resize();
@@ -230,6 +231,9 @@ function addGround() {
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(1600, 1600).rotateX(-Math.PI / 2), mat);
   ground.name = 'Ground';
   ground.position.set(hallBox.getCenter(V3()).x, hallBox.min.y - 0.03, hallBox.getCenter(V3()).z);
+  // a backdrop, not a surface: drawn first and never written to the depth buffer, so the hall
+  // floor 3 cm above it always wins (at a distance 3 cm is only a few depth steps: it flickered)
+  mat.depthWrite = false;
   ground.renderOrder = -1;
   scene.add(ground);
 }
@@ -1445,6 +1449,7 @@ function buildUI() {
   $('#btn-layers').addEventListener('click', () => togglePopover(popovers[0]));
   $$('[data-close]').forEach((b) => b.addEventListener('click', closePopovers));
   $('#btn-help').addEventListener('click', () => { closePopovers(); $('#help').showModal(); });
+  setupWatermark();
   setupPhoto();
   setupVideo();
   $('#btn-shadows').addEventListener('click', () => setShadows(!state.shadows));
@@ -1701,6 +1706,8 @@ async function savePhoto() {
   }
   if (!error) {
     prog.textContent = 'Saving…';
+    const wm = await watermarkCanvas(w, h);
+    if (wm) ctx.drawImage(wm.canvas, wm.x, wm.y);
     await nextTask();
     const jpg = PHOTO.format === 'jpg';
     const blob = await new Promise((res) => out.toBlob(res, jpg ? 'image/jpeg' : 'image/png', jpg ? 0.95 : undefined));
@@ -1718,6 +1725,49 @@ async function savePhoto() {
   } else {
     prog.hidden = true;
     dlg.close();
+  }
+}
+
+// ---- watermark: the B10 lockup, top right, on saved photos and videos (on by default; a switch
+// in the photo and video panels). Sized from the 16:9 reference: 22.5% of the frame's width
+// there, i.e. 30% of the square root of the frame's area, so it keeps the same visual weight in
+// any shape (16:9, 9:16, 1:1 or any photo size); the margin is 4.5% of the short side.
+const WATERMARK = { on: true };
+const WM_ASPECT = 654.74 / 132.77;
+const wmImg = new Image();
+wmImg.src = 'assets/b10-lockup.svg?v=20261113n';
+function watermarkRect(W, H) {
+  const w = Math.min(0.3 * Math.sqrt(W * H), 0.45 * W), h = w / WM_ASPECT, m = 0.045 * Math.min(W, H);
+  return { x: W - m - w, y: m, w, h };
+}
+async function watermarkCanvas(W, H) {     // the lockup drawn once at its final size (with a soft shadow)
+  if (!WATERMARK.on) return null;
+  try { await wmImg.decode(); } catch { return null; }
+  const r = watermarkRect(W, H), pad = Math.ceil(r.h * 0.2);
+  const c = document.createElement('canvas');
+  c.width = Math.ceil(r.w) + pad * 2; c.height = Math.ceil(r.h) + pad * 2;
+  const x = c.getContext('2d');
+  x.shadowColor = 'rgba(0, 0, 0, 0.3)'; x.shadowBlur = r.h * 0.09;
+  x.drawImage(wmImg, pad, pad, r.w, r.h);
+  return { canvas: c, x: Math.round(r.x - pad), y: Math.round(r.y - pad) };
+}
+function placeWatermarkPreview() {        // in video mode, show where it will sit on the framed view
+  const el = $('#wm-preview');
+  if (!video.on || !WATERMARK.on) { el.hidden = true; return; }
+  const b = canvas.getBoundingClientRect(), r = watermarkRect(b.width, b.height);
+  Object.assign(el.style, { left: `${b.left + r.x}px`, top: `${b.top + r.y}px`, width: `${r.w}px`, height: `${r.h}px` });
+  el.hidden = false;
+}
+function setupWatermark() {
+  try { const v = localStorage.getItem('b10-watermark'); if (v !== null) WATERMARK.on = v !== '0'; } catch { /* storage blocked */ }
+  for (const sw of $$('[data-watermark]')) {
+    sw.checked = WATERMARK.on;
+    sw.addEventListener('change', () => {
+      WATERMARK.on = sw.checked;
+      for (const o of $$('[data-watermark]')) o.checked = WATERMARK.on;
+      try { localStorage.setItem('b10-watermark', WATERMARK.on ? '1' : '0'); } catch { /* ignore */ }
+      placeWatermarkPreview();
+    });
   }
 }
 
@@ -1850,6 +1900,7 @@ function endVideo() {
   if (video.phase === 'review') editPath();
   video.on = false;
   $('#videohud').hidden = true;
+  placeWatermarkPreview();
   document.body.classList.remove('video-on');
   trail.visible = false;
   resize();
@@ -2159,6 +2210,7 @@ async function renderVideo() {
   let Mp4;
   try { Mp4 = await loadMuxer(); } catch { say('Couldn’t load the video writer. Check the internet connection and try again.'); return; }
   const choices = await codecChoices(w, h, fps);
+  const wm = await watermarkCanvas(w, h);
   if (!choices.length) { say(`This browser can’t encode ${w} × ${h} video. Try a smaller size.`); return; }
 
   const gl = renderer.getContext();
@@ -2203,6 +2255,7 @@ async function renderVideo() {
         renderer.setRenderTarget(null);
         renderer.render(scene, camera);
         ctx.drawImage(canvas, 0, 0, w * ss, h * ss, 0, 0, w, h);    // same task as the draw: still there
+        if (wm) ctx.drawImage(wm.canvas, wm.x, wm.y);
         const frame = new VideoFrame(out, { timestamp: stamp(f), duration: Math.round(1e6 / fps) });
         encoder.encode(frame, { keyFrame: f % (fps * 2) === 0 });
         frame.close();
@@ -2283,5 +2336,5 @@ renderer.setAnimationLoop(() => {
 });
 controls.addEventListener('start', () => { stopTour(); state.fly = null; setActivePreset(null); closePopovers(); });
 
-if (new URLSearchParams(location.search).has('debug')) window.b10 = { camera, controls, layers, zones, labelObjs, state, cut, walk, enterWalk, exitWalk, poses, zonePose, fitPoseToLimits, clampOrbit, blockAt, focusBlock, go, setHoverBlock, scene, renderer, renderOutline, video, VIDEO, buildPath, startVideo, addKeyframe, finishPath, renderVideo, editPath, endVideo, updateWalk };
+if (new URLSearchParams(location.search).has('debug')) window.b10 = { camera, controls, layers, zones, labelObjs, state, cut, walk, enterWalk, exitWalk, poses, zonePose, fitPoseToLimits, clampOrbit, blockAt, focusBlock, go, setHoverBlock, scene, renderer, renderOutline, video, VIDEO, buildPath, startVideo, addKeyframe, finishPath, renderVideo, editPath, endVideo, updateWalk, watermarkCanvas, watermarkRect, WATERMARK };
 boot();

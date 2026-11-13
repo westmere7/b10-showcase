@@ -7,7 +7,7 @@
   <meta name="description" content="Interactive 3D floor plan of the B10 sports hall showcase for RMIT Vietnam Experience Day 2026, covering SSET, SCD and TBS.">
   <meta name="theme-color" content="#000054">
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-  <link rel="stylesheet" href="assets/style.css?v=20261113m">
+  <link rel="stylesheet" href="assets/style.css?v=20261113n">
   <script type="importmap">
     {
       "imports": {
@@ -116,6 +116,7 @@
     <button class="hud-btn icon" id="video-exit" aria-label="Leave video mode (V)" title="Leave video mode (V)"><svg><use href="#i-close"/></svg></button>
   </div>
   <div id="crosshair" class="crosshair" hidden></div>
+  <img id="wm-preview" class="wm-preview" src="assets/b10-lockup.svg" alt="" hidden>
 
   <div id="loading" class="loading" role="status" aria-live="polite">
     <div class="loading-card">
@@ -192,6 +193,7 @@
         <button role="radio" data-format="png">PNG</button><button role="radio" data-format="jpg">JPG</button>
       </div>
     </div>
+    <label class="row"><span>Watermark</span><input type="checkbox" class="switch" data-watermark aria-label="B10 lockup watermark"></label>
     <p class="photo-progress" id="photo-progress" role="status" aria-live="polite" hidden></p>
     <div class="photo-actions"><button class="btn" id="photo-cancel">Cancel</button><button class="btn primary" id="photo-save">Save photo</button></div>
     </div>
@@ -221,6 +223,7 @@
       </div>
     </div>
     <label class="row slider"><span>Speed</span><input type="range" id="video-speed" min="0.25" max="3" step="0.05" value="1" aria-label="Camera speed"><output id="video-speed-val" for="video-speed">1.00×</output></label>
+    <label class="row"><span>Watermark</span><input type="checkbox" class="switch" data-watermark aria-label="B10 lockup watermark"></label>
     <p class="photo-dims" id="video-dims"></p>
     <div class="video-bar" id="video-bar" hidden><div></div></div>
     <p class="photo-progress" id="video-progress" role="status" aria-live="polite" hidden></p>
@@ -233,6 +236,6 @@
   </dialog>
 
   <noscript><p class="noscript">This 3D viewer needs JavaScript and a browser that supports WebGL.</p></noscript>
-  <script type="module" src="assets/app.js?v=20261113m"></script>
+  <script type="module" src="assets/app.js?v=20261113n"></script>
 </body>
 </html>

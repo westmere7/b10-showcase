@@ -223,6 +223,7 @@ input.switch:focus-visible { outline: 2px solid var(--rmit-red); outline-offset:
 .segmented.dark button[aria-checked=true] { background: #fff; color: var(--ink); }
 .video-panel { position: fixed; inset: auto var(--gap) var(--gap) auto; margin: 0; z-index: 40; width: 360px; max-width: calc(100% - 24px); }
 .video-panel .slider output { width: 46px; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+.wm-preview { position: fixed; z-index: 12; pointer-events: none; filter: drop-shadow(0 0 6px rgba(0, 0, 0, .3)); }
 .video-info { font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .video-bar { height: 4px; margin-top: 10px; border-radius: 4px; background: var(--hover); overflow: hidden; }
 .video-bar div { height: 100%; width: 0; background: var(--rmit-red); }
