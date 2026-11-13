@@ -416,6 +416,7 @@ function addLayer(entry, root) {
     // "[1-sided]": SketchUp faces painted differently on each side arrive as two overlapping
     // one-sided copies, which would flicker against each other if both were drawn two-sided.
     o.material.side = o.material.name?.includes('[1-sided]') ? THREE.FrontSide : THREE.DoubleSide;
+    if (entry.zone && o.material.map) patchDecal(o.material);   // screens, posters, signs: see patchDecal
     if (o.material.name === FLOOR_MAT && !o.material.userData.keepColour) {   // showcase floor
       o.material.color.set(FLOOR_COLOUR);
       o.material.roughness = 0.75; o.material.metalness = 0;
@@ -549,6 +550,24 @@ function makeBlockFinder(root, blocks) {
     if (!idOf.has(node)) { idOf.set(node, blocks.length); blocks.push({ box: boxOf(node).clone(), name: node.name || '' }); }
     return idOf.get(node);
   };
+}
+
+// Image surfaces (screens, posters, sign art) often lie exactly on another face in the source
+// model: a plain panel on the same plane, or the back of the device facing the other way. Drawn at
+// the same depth they flicker. So an image face gets a tiny depth nudge (about what
+// polygonOffset(1, 4) would give): toward the viewer on its front side, so the picture always wins,
+// and away on its back side, so the device's own back panel wins when seen from behind.
+function patchDecal(mat) {
+  if (mat.userData.decal) return;
+  mat.userData.decal = true;
+  mat.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(/}\s*$/, `
+  float decalSlope = max(abs(dFdx(gl_FragCoord.z)), abs(dFdy(gl_FragCoord.z)));
+  gl_FragDepth = gl_FragCoord.z + (gl_FrontFacing ? -1.0 : 1.0) * (decalSlope + 4.0 / 16777216.0);
+}`);
+  };
+  mat.customProgramCacheKey = () => 'decal';
+  mat.needsUpdate = true;
 }
 
 function flipWinding(g) {
@@ -782,7 +801,7 @@ function applyHash() {
 
 // ------------------------------------------------------------------ walk mode
 const walk = { yaw: 0, pitch: 0, height: EYE, keys: new Set(), target: null, drag: null, pad: { move: 0, turn: 0 } };
-const FLY_MAX = 12;                               // video mode: Q / E fly down / up, from eye level to this (m), below the roof trusses (~12.8 m)
+const FLY_MAX = 12;                               // walk / video mode: Q / E fly down / up, from eye level to this (m), below the roof trusses (~12.8 m)
 const marker = new THREE.Mesh(new THREE.RingGeometry(0.22, 0.32, 40), new THREE.MeshBasicMaterial({ color: 0xE60028, transparent: true, opacity: 0.9, depthTest: false }));
 marker.rotation.x = -Math.PI / 2; marker.visible = false; marker.renderOrder = 10; scene.add(marker);
 
@@ -880,7 +899,7 @@ function updateWalk(dt) {
       }
     }
   }
-  if (video.on && video.phase === 'edit') {         // video mode: Q / E fly down / up, never below eye level
+  if (!video.play) {                                // Q / E fly down / up, never below eye level
     const up = (k.has('KeyE') ? 1 : 0) - (k.has('KeyQ') ? 1 : 0);
     if (up) walk.height = THREE.MathUtils.clamp(walk.height + up * speed * dt, EYE, FLY_MAX);
   }
@@ -913,8 +932,8 @@ function updateWalkHint() {
   $('#crosshair').hidden = !isLocked();
   if (video.on) updateVideoHud();
   if (isTouch) hint.innerHTML = '<strong>Walk mode</strong> · Tap the floor to walk there · Drag to look around';
-  else if (isLocked()) hint.innerHTML = '<strong>Walk mode</strong> · Move the mouse to look · Click to walk to the crosshair · <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> to move · <kbd>Esc</kbd> frees the mouse';
-  else hint.innerHTML = '<strong>Walk mode</strong> · <b>Click the view</b> to look around with the mouse · <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> to move · <kbd>Esc</kbd> to exit';
+  else if (isLocked()) hint.innerHTML = '<strong>Walk mode</strong> · Move the mouse to look · Click to walk to the crosshair · <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> to move · <kbd>Q</kbd><kbd>E</kbd> fly · <kbd>Esc</kbd> frees the mouse';
+  else hint.innerHTML = '<strong>Walk mode</strong> · <b>Click the view</b> to look around with the mouse · <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> to move · <kbd>Q</kbd><kbd>E</kbd> fly · <kbd>Esc</kbd> to exit';
 }
 document.addEventListener('pointerlockchange', () => {
   if (!isLocked()) lastUnlock = performance.now();
@@ -1771,7 +1790,8 @@ function setupVideo() {
   $('#video-key').addEventListener('click', addKeyframe);
   $('#video-undo').addEventListener('click', undoKeyframe);
   $('#video-clear').addEventListener('click', () => { video.keys = []; updateTrail(); updateVideoHud(); });
-  $('#video-done').addEventListener('click', finishPath);
+  $('#video-done').addEventListener('click', () => finishPath());
+  $('#video-save-path').addEventListener('click', () => { if (!state.exporting && video.keys.length > 1) savePathFile(); });
   $('#video-exit').addEventListener('click', () => endVideo());
   $('#video-back').addEventListener('click', editPath);
   $('#video-render').addEventListener('click', renderVideo);
@@ -1829,7 +1849,6 @@ function endVideo() {
   if (!video.on || state.exporting) return;
   if (video.phase === 'review') editPath();
   video.on = false;
-  walk.height = EYE;
   $('#videohud').hidden = true;
   document.body.classList.remove('video-on');
   trail.visible = false;
@@ -2054,11 +2073,10 @@ function applyPose(pose) {
 }
 
 // ---- playback (preview) and the video panel
-function finishPath(save = true) {
+function finishPath() {
   if (!video.on || !state.walking || video.keys.length < 2) return;
   if (isLocked()) document.exitPointerLock();
   walk.keys.clear(); walk.target = null; marker.visible = false;
-  if (save) savePathFile();
   video.phase = 'review';
   video.saved = { pos: camera.position.clone(), fov: camera.fov };
   trail.visible = false;
@@ -2156,7 +2174,7 @@ async function renderVideo() {
   state.exporting = true; video.cancel = false;
   const playing = video.play; video.play = null;
   dlg.classList.add('busy');
-  $('#video-render').disabled = $('#video-back').disabled = true;
+  $('#video-render').disabled = $('#video-back').disabled = $('#video-save-path').disabled = true;
   $('#video-cancel').hidden = false;
   bar.hidden = false;
   const savedRatio = renderer.getPixelRatio();
@@ -2229,7 +2247,7 @@ async function renderVideo() {
     state.exporting = false;
     video.play = playing || { t: 0 };
     dlg.classList.remove('busy');
-    $('#video-render').disabled = $('#video-back').disabled = false;
+    $('#video-render').disabled = $('#video-back').disabled = $('#video-save-path').disabled = false;
     $('#video-cancel').hidden = true;
     bar.hidden = true;
     out.width = out.height = 0;
