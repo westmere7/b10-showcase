@@ -1720,17 +1720,21 @@ function downloadBlob(blob, name) {
 // smoothly; Render turns it into an MP4. The view is framed to the video's shape the whole time.
 // Smoothing: positions and points of interest follow centripetal Catmull-Rom splines through the
 // keyframes (no loops or overshoot), the zoom a Catmull-Rom curve; the camera always looks at the
-// interpolated point of interest. Each stretch gets as long as its move, turn or zoom needs at the
-// chosen speed, the pace inside it follows that effort evenly, and the pace between stretches
-// blends smoothly (monotone cubic), easing in at the start and out at the end.
+// interpolated point of interest. The pace follows how much each bit of the path moves, turns and
+// zooms at the chosen speed, then is blurred over time so speed always changes gradually (no jolts
+// at keyframes or sudden turns) and the camera eases in and out at the ends; a last light blur of
+// position, view direction and zoom takes off any remaining corners.
 const MP4_MUXER = 'https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/build/mp4-muxer.mjs';
 const VIDEO_SPEEDS = {                     // metres / second, degrees / second (turn and zoom)
-  slow: { move: 0.8, turn: 16, zoom: 8 },
-  normal: { move: 1.4, turn: 28, zoom: 14 },
-  fast: { move: 2.6, turn: 46, zoom: 24 },
+  slow: { move: 0.8, turn: 12, zoom: 8 },
+  normal: { move: 1.4, turn: 20, zoom: 12 },
+  fast: { move: 2.6, turn: 34, zoom: 20 },
 };
-const PATH_HOLD = 0.6;                    // seconds held still on the first and last frame
-const PATH_SAMPLES = 48;                  // effort samples per stretch
+const PATH_HOLD = 0.4;                    // seconds held still on the first and last frame
+const PATH_SAMPLES = 64;                  // effort samples per stretch
+const PATH_RATE = 120;                    // the smoothed path is worked out 120 times per second of video
+const PACE_BLUR = 0.75;                   // s: speed changes spread over about +-1.5 s (also the ease in / out)
+const POS_BLUR = 0.18, VIEW_BLUR = 0.3;   // s: final softening of position and of view direction / zoom
 function videoAspect() { return video.on ? VIDEO_SHAPES[VIDEO.shape] || 16 / 9 : 0; }
 function videoSize() {
   const a = VIDEO_SHAPES[VIDEO.shape] || 16 / 9, s = VIDEO.size;
@@ -1919,67 +1923,117 @@ function parsePath(json) {
 }
 function buildPath(keys, speedName) {
   const sp = VIDEO_SPEEDS[speedName] || VIDEO_SPEEDS.normal;
-  const n = keys.length, S = PATH_SAMPLES;
+  const n = keys.length;
   const P = new THREE.CatmullRomCurve3(keys.map((k) => V3(...k.position)), false, 'centripetal');
   const Q = new THREE.CatmullRomCurve3(keys.map((k) => V3(...k.lookAt)), false, 'centripetal');
   const F = new THREE.CatmullRomCurve3(keys.map((k) => V3(k.fov, 0, 0)), false, 'catmullrom', 0.5);
   const tmp = V3();
-  const atU = (u, out) => {                          // u: 0 at the first keyframe, 1 at the second, ...
+  const atU = (u, pos, poi) => {                     // u: 0 at the first keyframe, 1 at the second, ...
     const t = THREE.MathUtils.clamp(u / (n - 1), 0, 1);
-    P.getPoint(t, out.pos); Q.getPoint(t, out.poi); out.fov = F.getPoint(t, tmp).x;
+    P.getPoint(t, pos); Q.getPoint(t, poi);
+    return F.getPoint(t, tmp).x;
+  };
+  // 1. effort along the curve: seconds each small step needs at this speed, blending moving,
+  //    turning and zooming smoothly (a soft maximum, so the pace never switches abruptly)
+  const S = PATH_SAMPLES, M = (n - 1) * S;
+  const uT = new Float64Array(M + 1);                // raw time at each sample
+  {
+    const p0 = V3(), q0 = V3(), p1 = V3(), q1 = V3(), d0 = V3(0, 0, -1), d1 = V3();
+    let f0 = atU(0, p0, q0); d0.subVectors(q0, p0).normalize();
+    for (let i = 0; i < n - 1; i++) {
+      const start = i * S;
+      for (let k = 1; k <= S; k++) {
+        const f1 = atU(i + k / S, p1, q1);
+        d1.subVectors(q1, p1); if (d1.lengthSq() > 1e-6) d1.normalize(); else d1.copy(d0);
+        const m = p0.distanceTo(p1) / sp.move, r = THREE.MathUtils.radToDeg(d0.angleTo(d1)) / sp.turn, z = Math.abs(f1 - f0) / sp.zoom;
+        uT[start + k] = uT[start + k - 1] + Math.hypot(Math.hypot(m * m, r * r), z * z) ** 0.5;   // 4-norm
+        p0.copy(p1); q0.copy(q1); d0.copy(d1); f0 = f1;
+      }
+      const seg = uT[start + S] - uT[start], need = 0.6;  // every stretch takes a moment, even a tiny one
+      if (seg < need) for (let k = 1; k <= S; k++) uT[start + k] += (need - seg) * (k / S);
+    }
+  }
+  // 2. pace over time, then blur it (Gaussian, zero outside the path): the camera speeds up and
+  //    slows down gradually everywhere, starts and ends at rest, and never jerks at a keyframe
+  const H = 1 / PATH_RATE, rawEnd = uT[M];
+  const R = Math.max(2, Math.ceil(rawEnd / H));
+  const uRaw = new Float64Array(R + 1);
+  for (let i = 0, j = 0; i <= R; i++) {
+    const t = (i / R) * rawEnd;
+    while (j < M - 1 && uT[j + 1] < t) j++;
+    const span = uT[j + 1] - uT[j];
+    uRaw[i] = (j + (span > 1e-9 ? (t - uT[j]) / span : 0)) / S;
+  }
+  const hRaw = rawEnd / R;
+  const pad = Math.ceil((PACE_BLUR * 3) / hRaw);
+  const vel = new Float64Array(R + 2 * pad);
+  for (let i = 0; i < R; i++) vel[pad + i] = uRaw[i + 1] - uRaw[i];   // u per step
+  const vs = gaussBlur(vel, PACE_BLUR / hRaw);
+  let total = 0; for (const v of vs) total += v;
+  const scale = (n - 1) / total;
+  // keep the part where the camera is moving at all (the blur's far tails are imperceptible)
+  let first = 0, last = vs.length - 1;
+  const tiny = ((n - 1) / vs.length) * 1e-3;
+  while (first < last && vs[first] * scale < tiny) first++;
+  while (last > first && vs[last] * scale < tiny) last--;
+  const L = last - first + 2;
+  const us = new Float64Array(L);
+  for (let i = 1, acc = 0; i < L; i++) { acc += vs[first + i - 1] * scale; us[i] = Math.min(n - 1, acc); }
+  us[L - 1] = n - 1;
+  // 3. sample the camera at that pace, then soften what's left: tiny blurs of position, view
+  //    direction and zoom over time take the corners off the spline's own joins
+  const pos = new Float64Array(L * 3), dir = new Float64Array(L * 3), fov = new Float64Array(L);
+  {
+    const p = V3(), q = V3(), d = V3(0, 0, -1);
+    for (let i = 0; i < L; i++) {
+      fov[i] = atU(us[i], p, q);
+      const dd = V3().subVectors(q, p);
+      if (dd.lengthSq() > 1e-6) d.copy(dd.normalize());
+      pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z;
+      dir[i * 3] = d.x; dir[i * 3 + 1] = d.y; dir[i * 3 + 2] = d.z;
+    }
+  }
+  const blurCh = (arr, stride, sigma) => {
+    for (let c = 0; c < stride; c++) {
+      const ch = new Float64Array(L);
+      for (let i = 0; i < L; i++) ch[i] = arr[i * stride + c];
+      const out = gaussBlur(ch, sigma / hRaw, true);
+      for (let i = 0; i < L; i++) arr[i * stride + c] = out[i];
+    }
+  };
+  blurCh(pos, 3, POS_BLUR); blurCh(dir, 3, VIEW_BLUR); blurCh(fov, 1, VIEW_BLUR);
+  const end = (L - 1) * hRaw;
+  const duration = end + PATH_HOLD * 2;
+  const _d = V3();
+  const at = (time, out) => {
+    const x = THREE.MathUtils.clamp((time - PATH_HOLD) / hRaw, 0, L - 1);
+    const i = Math.min(L - 2, Math.floor(x)), f = x - i, g = 1 - f;
+    out.pos.set(pos[i * 3] * g + pos[i * 3 + 3] * f, pos[i * 3 + 1] * g + pos[i * 3 + 4] * f, pos[i * 3 + 2] * g + pos[i * 3 + 5] * f);
+    _d.set(dir[i * 3] * g + dir[i * 3 + 3] * f, dir[i * 3 + 1] * g + dir[i * 3 + 4] * f, dir[i * 3 + 2] * g + dir[i * 3 + 5] * f).normalize();
+    out.poi.copy(out.pos).addScaledVector(_d, 10);
+    out.fov = fov[i] * g + fov[i + 1] * f;
     return out;
   };
-  const dirOf = (pose, out, prev) => {
-    out.subVectors(pose.poi, pose.pos);
-    return out.lengthSq() > 1e-6 ? out.normalize() : out.copy(prev);
-  };
-  // effort of each stretch (seconds at this speed): the slowest of moving, turning and zooming
-  const segs = [];
-  const a = newPose(), b = newPose(), da = V3(0, 0, -1), db = V3();
-  for (let i = 0; i < n - 1; i++) {
-    const cum = new Float64Array(S + 1);
-    atU(i, a); dirOf(a, da, da);
-    for (let k = 1; k <= S; k++) {
-      atU(i + k / S, b); dirOf(b, db, da);
-      const e = Math.max(a.pos.distanceTo(b.pos) / sp.move, THREE.MathUtils.radToDeg(da.angleTo(db)) / sp.turn, Math.abs(b.fov - a.fov) / sp.zoom);
-      cum[k] = cum[k - 1] + e;
-      a.pos.copy(b.pos); a.poi.copy(b.poi); a.fov = b.fov; da.copy(db);
-    }
-    segs.push({ cum, total: cum[S], D: Math.max(cum[S], 0.8) });
-  }
-  // ease in / out: the first and last stretch start / end at rest, so give them a little longer
-  if (segs.length === 1) segs[0].D *= 1.5;
-  else { segs[0].D *= 1.3; segs.at(-1).D *= 1.3; }
-  const T = [0];
-  for (const sg of segs) T.push(T.at(-1) + sg.D);
-  // pace (keyframes per second) at each keyframe: monotone cubic (Fritsch-Butland), 0 at both ends
-  const m = new Float64Array(n);
-  for (let i = 1; i < n - 1; i++) {
-    const h0 = segs[i - 1].D, h1 = segs[i].D, w1 = 2 * h1 + h0, w2 = h1 + 2 * h0;
-    m[i] = (w1 + w2) / (w1 * h0 + w2 * h1);
-  }
-  const end = T.at(-1);
-  const duration = end + PATH_HOLD * 2;
-  const at = (time, out) => {
-    const t = THREE.MathUtils.clamp(time - PATH_HOLD, 0, end);
-    let i = 0;
-    while (i < segs.length - 1 && t > T[i + 1]) i++;
-    const sg = segs[i], s = THREE.MathUtils.clamp((t - T[i]) / sg.D, 0, 1);
-    const s2 = s * s, s3 = s2 * s;
-    let sigma = (s3 - 2 * s2 + s) * sg.D * m[i] + (-2 * s3 + 3 * s2) + (s3 - s2) * sg.D * m[i + 1];
-    sigma = THREE.MathUtils.clamp(sigma, 0, 1);
-    let u;
-    if (sg.total < 1e-6) u = i + sigma;
-    else {                                           // effort -> spline parameter
-      const target = sigma * sg.total, c = sg.cum;
-      let lo = 0, hi = S;
-      while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (c[mid] <= target) lo = mid; else hi = mid; }
-      const span = c[hi] - c[lo];
-      u = i + (lo + (span > 1e-9 ? (target - c[lo]) / span : 0)) / S;
-    }
-    return atU(u, out);
-  };
   return { at, duration };
+}
+// Gaussian blur of a 1-D signal; `hold` repeats the end values (otherwise zero outside)
+function gaussBlur(src, sigma, hold = false) {
+  if (sigma < 0.5) return Float64Array.from(src);
+  const r = Math.ceil(sigma * 3), k = new Float64Array(2 * r + 1);
+  let sum = 0;
+  for (let i = -r; i <= r; i++) { k[i + r] = Math.exp(-(i * i) / (2 * sigma * sigma)); sum += k[i + r]; }
+  for (let i = 0; i < k.length; i++) k[i] /= sum;
+  const n = src.length, out = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    let acc = 0;
+    for (let j = -r; j <= r; j++) {
+      let x = i + j;
+      if (x < 0 || x >= n) { if (!hold) continue; x = x < 0 ? 0 : n - 1; }
+      acc += src[x] * k[j + r];
+    }
+    out[i] = acc;
+  }
+  return out;
 }
 const _look = V3();
 function applyPose(pose) {
