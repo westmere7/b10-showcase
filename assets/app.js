@@ -16,7 +16,7 @@ const V3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const EYE = 1.7;                                   // walk-mode eye height (m)
 const WALK_SPEED = 1.6, RUN_SPEED = 4.0;
 const SOLID_GREY = new THREE.Color('#b9bcc6');
-const FLOOR_MAT = 'MainZoneAfterOffset', FLOOR_COLOUR = '#000054';   // the showcase floor, in RMIT navy
+const FLOOR_MAT = 'MainZoneAfterOffset', FLOOR_COLOUR = '#8f9097';   // the showcase floor: a little darker than the file's, so white stands read clearly
 const USER_LAYERS = new Set(['sset', 'scd', 'tbs', 'guides']);   // the only layers visitors can toggle
 const ROOF = 'roof';                               // shown in walk mode only
 const icon = (id) => `<svg><use href="#i-${id}"/></svg>`;
@@ -99,10 +99,20 @@ canvas.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefau
 controls.minDistance = 1.5;
 controls.maxDistance = 160;
 
+// video capture state (see "video capture"): resize() frames the view to the video's shape
+const VIDEO = { shape: '16:9', size: 1080, fps: 30, speed: 'normal' };
+const VIDEO_SHAPES = { '16:9': 16 / 9, '9:16': 9 / 16, '1:1': 1 };
+const video = { on: false, phase: 'edit', keys: [], play: null, path: null, saved: null, cancel: false, muxer: null };
 function resize() {
-  const w = stage.clientWidth, h = stage.clientHeight;
-  renderer.setSize(w, h, false);
+  let w = stage.clientWidth, h = stage.clientHeight;
   labelRenderer.setSize(w, h);
+  const a = video.on ? VIDEO_SHAPES[VIDEO.shape] || 16 / 9 : 0;   // video mode: frame to the video's shape
+  if (a) {
+    if (w / h > a) w = Math.max(1, Math.round(h * a)); else h = Math.max(1, Math.round(w / a));
+    canvas.style.width = `${w}px`; canvas.style.height = `${h}px`;
+  } else canvas.style.width = canvas.style.height = '';
+  stage.classList.toggle('framed', !!a);
+  renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
 }
@@ -177,6 +187,7 @@ async function boot() {
   $('#load-detail').textContent = 'Almost ready';
   await Promise.all(preparing);
   addEntranceArrow();
+  addGround();
 
   fitCutaway();
   refreshMaterials();
@@ -188,6 +199,39 @@ async function boot() {
   setTimeout(() => { $('#loading').hidden = true; }, 1200);   // stop its animations once it's gone
   if (location.hash) applyHash();
   try { if (!localStorage.getItem('b10-help-seen')) { $('#help').showModal(); localStorage.setItem('b10-help-seen', '1'); } } catch { /* storage blocked */ }
+}
+
+// An endless grid ground for the hall to stand on: 1 m lines near the hall, 5 m lines further
+// out, fading into the background colour towards the horizon.
+function addGround() {
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      base: { value: new THREE.Color('#8b92a1') }, minor: { value: new THREE.Color('#7f8696') },
+      major: { value: new THREE.Color('#6f7687') }, bg: { value: scene.background },
+      centre: { value: hallBox.getCenter(V3()) },
+    },
+    vertexShader: 'varying vec3 vW; void main() { vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }',
+    fragmentShader: `
+      uniform vec3 base, minor, major, bg, centre; varying vec3 vW;
+      float grid(vec2 p, float s) {            // anti-aliased lines, 1 pixel wide at any distance
+        vec2 q = p / s; vec2 g = abs(fract(q - 0.5) - 0.5) / fwidth(q);
+        return 1.0 - min(min(g.x, g.y), 1.0);
+      }
+      void main() {
+        float d = distance(vW.xz, centre.xz);
+        vec3 c = base;
+        c = mix(c, minor, grid(vW.xz, 1.0) * (1.0 - smoothstep(25.0, 90.0, d)));
+        c = mix(c, major, grid(vW.xz, 5.0) * (1.0 - smoothstep(120.0, 260.0, d)));
+        c = mix(c, bg, smoothstep(70.0, 380.0, d));
+        gl_FragColor = vec4(c, 1.0);
+        #include <colorspace_fragment>
+      }`,
+  });
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(1600, 1600).rotateX(-Math.PI / 2), mat);
+  ground.name = 'Ground';
+  ground.position.set(hallBox.getCenter(V3()).x, hallBox.min.y - 0.03, hallBox.getCenter(V3()).z);
+  ground.renderOrder = -1;
+  scene.add(ground);
 }
 
 // Red arrow painted on the floor at the entrance (the +Z side, where the Entrance view starts),
@@ -372,10 +416,10 @@ function addLayer(entry, root) {
     // "[1-sided]": SketchUp faces painted differently on each side arrive as two overlapping
     // one-sided copies, which would flicker against each other if both were drawn two-sided.
     o.material.side = o.material.name?.includes('[1-sided]') ? THREE.FrontSide : THREE.DoubleSide;
-    if (o.material.name === FLOOR_MAT && !o.material.userData.keepColour) {   // showcase floor: RMIT navy
+    if (o.material.name === FLOOR_MAT && !o.material.userData.keepColour) {   // showcase floor
       o.material.color.set(FLOOR_COLOUR);
       o.material.roughness = 0.75; o.material.metalness = 0;
-      o.material.userData.keepColour = true;        // stays navy in Solid mode too
+      o.material.userData.keepColour = true;        // same in Solid mode
     }
     const g = o.geometry;
     const sig = Object.keys(g.attributes).sort()
@@ -448,9 +492,9 @@ function addLayer(entry, root) {
       const z = man.zones.find((x) => (m.material.name || '').endsWith(`_${x.short}`));
       if (!z) continue;
       m.userData.zoneId = z.id; m.userData.fill = /Fill/.test(m.material.name);
-      // on the navy floor the zones need lighter, stronger colours than the file's (made for grey)
-      if (m.userData.fill) { m.material.color.set(z.colour).offsetHSL(0, 0.12, 0.1); m.material.opacity = 0.14; }   // just a hint
-      else m.material.color.set(z.colour).offsetHSL(0, 0.05, 0.16);
+      // vivid school colours on the darker floor
+      if (m.userData.fill) { m.material.color.set(z.colour).offsetHSL(0, 0.25, 0.02); m.material.opacity = 0.3; }
+      else m.material.color.set(z.colour).offsetHSL(0, 0.25, 0.08);
       m.userData.baseOpacity = m.material.opacity;
     }
   }
@@ -769,6 +813,7 @@ function zoomWalkFov(stepDeg) {
 }
 function exitWalk(reframe = true) {
   if (!state.walking) return;
+  if (video.on) endVideo();
   state.walking = false;
   walk.target = null; marker.visible = false; walk.keys.clear();
   if (isLocked()) document.exitPointerLock();
@@ -857,8 +902,9 @@ function setWalkTarget(p) {
 function updateWalkHint() {
   const hint = $('#walkhint');
   if (!state.walking) { hint.hidden = true; $('#crosshair').hidden = true; return; }
-  hint.hidden = !!state.tour;
+  hint.hidden = !!state.tour || video.on;
   $('#crosshair').hidden = !isLocked();
+  if (video.on) updateVideoHud();
   if (isTouch) hint.innerHTML = '<strong>Walk mode</strong> · Tap the floor to walk there · Drag to look around';
   else if (isLocked()) hint.innerHTML = '<strong>Walk mode</strong> · Move the mouse to look · Click to walk to the crosshair · <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> to move · <kbd>Esc</kbd> frees the mouse';
   else hint.innerHTML = '<strong>Walk mode</strong> · <b>Click the view</b> to look around with the mouse · <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> to move · <kbd>Esc</kbd> to exit';
@@ -873,6 +919,7 @@ document.addEventListener('mousemove', (e) => {
   walk.pitch = THREE.MathUtils.clamp(walk.pitch - e.movementY * 0.0022, -1.3, 1.3);
 });
 canvas.addEventListener('pointerdown', (e) => {
+  if (video.play || state.exporting) return;
   stopTour();
   closePopovers();
   if (!state.walking) return;
@@ -1119,7 +1166,7 @@ stage.addEventListener('wheel', (e) => {     // on the parent, capture phase: ru
   e.preventDefault();
   e.stopImmediatePropagation();                              // keep OrbitControls' own zoom out of it
   stopTour();
-  if (state.fly) return;
+  if (state.fly || video.play || state.exporting) return;
   const px = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? canvas.clientHeight : 1;
   const dx = e.deltaX * px, dy = e.deltaY * px;
   if (state.walking && isMouseWheel(e)) { zoomWalkFov(Math.sign(dy) * 5); return; }   // mouse wheel: field of view
@@ -1153,7 +1200,18 @@ document.addEventListener('gesturestart', (e) => e.preventDefault());
 document.addEventListener('wheel', (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
 
 window.addEventListener('keydown', (e) => {
+  if (state.exporting) return;
+  if (video.on && video.phase === 'review') {          // playing the path back: Enter renders, Esc goes back
+    if (e.code === 'Escape') { e.preventDefault(); editPath(); }
+    else if ((e.code === 'Enter' || e.code === 'NumpadEnter') && !e.target.closest('button, input, select')) { e.preventDefault(); renderVideo(); }
+    return;
+  }
   if (e.target.closest('input, textarea, dialog[open]')) return;
+  if (video.on && state.walking && !e.repeat) {          // recording a path
+    if (e.code === 'KeyK') { addKeyframe(); return; }
+    if (e.code === 'Backspace' || e.code === 'Delete') { e.preventDefault(); undoKeyframe(); return; }
+    if (e.code === 'Enter' || e.code === 'NumpadEnter') { e.preventDefault(); finishPath(); return; }
+  }
   if (e.code === 'Escape' && closePopovers()) return;
   if (state.tour) stopTour();
   if (state.walking) {
@@ -1169,7 +1227,8 @@ window.addEventListener('keydown', (e) => {
   if (!state.walking && e.code === 'Space' && !e.target.closest('button, a, select')) { e.preventDefault(); go('top'); }
   if (e.key === '+' || e.key === '=') { if (state.walking) zoomWalkFov(-5); else flyForward(1); }
   if (e.key === '-' || e.key === '_') { if (state.walking) zoomWalkFov(5); else flyForward(-1); }
-  if (e.code === 'KeyV') toggleWalk();
+  if (e.code === 'KeyF' && !e.ctrlKey && !e.metaKey) toggleWalk();
+  if (e.code === 'KeyV' && !e.ctrlKey && !e.metaKey && !e.repeat) toggleVideo();
   if (e.code === 'KeyL') setShadows(!state.shadows);
   if (e.code === 'KeyC' && !e.ctrlKey && !e.metaKey && !e.altKey) openPhoto();
   if (e.code === 'KeyT' && !state.walking) startTour('hall');
@@ -1361,6 +1420,7 @@ function buildUI() {
   $$('[data-close]').forEach((b) => b.addEventListener('click', closePopovers));
   $('#btn-help').addEventListener('click', () => { closePopovers(); $('#help').showModal(); });
   setupPhoto();
+  setupVideo();
   $('#btn-shadows').addEventListener('click', () => setShadows(!state.shadows));
   applyShadows();
   $$('[data-shading]').forEach((b) => b.addEventListener('click', () => setShading(b.dataset.shading)));
@@ -1536,20 +1596,28 @@ function updatePhotoDialog() {
   const { w, h, capped } = photoSize(PHOTO.scale);
   $('#photo-dims').textContent = `${w.toLocaleString()} × ${h.toLocaleString()} px` + (capped ? ' (the most this browser can save)' : '');
 }
-function openPhoto() {
+function openPhoto(tab = 'photo') {
   if (state.loading || state.exporting || $('#photo').open) return;
   if (isLocked()) document.exitPointerLock();
   walk.keys.clear();
   stopTour();
   closePopovers();
   updatePhotoDialog();
+  setCaptureTab(tab);
   $('#photo-progress').hidden = true;
+  $('#video-open-error').hidden = true;
   $('#photo').showModal();
+}
+function setCaptureTab(tab) {
+  for (const b of $$('#cap-mode button')) b.setAttribute('aria-checked', String(b.dataset.mode === tab));
+  $('#cap-photo').hidden = tab !== 'photo';
+  $('#cap-video').hidden = tab !== 'video';
 }
 function setupPhoto() {
   try { const saved = JSON.parse(localStorage.getItem('b10-photo') || '{}'); Object.assign(PHOTO, saved); } catch { /* storage blocked */ }
   const remember = () => { try { localStorage.setItem('b10-photo', JSON.stringify(PHOTO)); } catch { /* ignore */ } };
-  $('#btn-photo').addEventListener('click', openPhoto);
+  $('#btn-photo').addEventListener('click', () => openPhoto(video.on ? 'video' : 'photo'));
+  for (const b of $$('#cap-mode button')) b.addEventListener('click', () => setCaptureTab(b.dataset.mode));
   for (const b of $$('#photo-scale button')) b.addEventListener('click', () => { PHOTO.scale = Number(b.dataset.scale); remember(); updatePhotoDialog(); });
   for (const b of $$('#photo-format button')) b.addEventListener('click', () => { PHOTO.format = b.dataset.format; remember(); updatePhotoDialog(); });
   $('#photo-cancel').addEventListener('click', () => { if (!state.exporting) $('#photo').close(); });
@@ -1612,12 +1680,8 @@ async function savePhoto() {
     const blob = await new Promise((res) => out.toBlob(res, jpg ? 'image/jpeg' : 'image/png', jpg ? 0.95 : undefined));
     if (blob) {
       const view = (location.hash.slice(1) || 'view').replace(/[^\w-]+/g, '');
-      const stamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-');
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `B10-Showcase_${view}_${w}x${h}_${stamp}.${jpg ? 'jpg' : 'png'}`;
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+      const stamp = fileStamp();
+      downloadBlob(blob, `B10-Showcase_${view}_${w}x${h}_${stamp}.${jpg ? 'jpg' : 'png'}`);
     } else error = new Error('the browser could not encode an image this large');
   }
   out.width = out.height = 0;                        // free the memory straight away
@@ -1631,12 +1695,456 @@ async function savePhoto() {
   }
 }
 
+function fileStamp() {
+  const d = new Date(), p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+}
+function downloadBlob(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+}
+
+// ------------------------------------------------------------------ video capture
+// V: record a camera path in walk mode. Move to each view and press K to keyframe it (position,
+// what's in the middle of the view, zoom). Enter saves the path as a .json file and plays it back
+// smoothly; Render turns it into an MP4. The view is framed to the video's shape the whole time.
+// Smoothing: positions and points of interest follow centripetal Catmull-Rom splines through the
+// keyframes (no loops or overshoot), the zoom a Catmull-Rom curve; the camera always looks at the
+// interpolated point of interest. Each stretch gets as long as its move, turn or zoom needs at the
+// chosen speed, the pace inside it follows that effort evenly, and the pace between stretches
+// blends smoothly (monotone cubic), easing in at the start and out at the end.
+const MP4_MUXER = 'https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/build/mp4-muxer.mjs';
+const VIDEO_SPEEDS = {                     // metres / second, degrees / second (turn and zoom)
+  slow: { move: 0.8, turn: 16, zoom: 8 },
+  normal: { move: 1.4, turn: 28, zoom: 14 },
+  fast: { move: 2.6, turn: 46, zoom: 24 },
+};
+const PATH_HOLD = 0.6;                    // seconds held still on the first and last frame
+const PATH_SAMPLES = 48;                  // effort samples per stretch
+function videoAspect() { return video.on ? VIDEO_SHAPES[VIDEO.shape] || 16 / 9 : 0; }
+function videoSize() {
+  const a = VIDEO_SHAPES[VIDEO.shape] || 16 / 9, s = VIDEO.size;
+  const even = (n) => Math.round(n / 2) * 2;
+  return a >= 1 ? { w: even(s * a), h: s } : { w: s, h: even(s / a) };
+}
+
+function setupVideo() {
+  try { Object.assign(VIDEO, JSON.parse(localStorage.getItem('b10-video') || '{}')); } catch { /* storage blocked */ }
+  if (!VIDEO_SHAPES[VIDEO.shape]) VIDEO.shape = '16:9';
+  const remember = () => { try { localStorage.setItem('b10-video', JSON.stringify(VIDEO)); } catch { /* ignore */ } };
+  const groups = { shape: 'shape', size: 'size', fps: 'fps', speed: 'speed' };
+  for (const [g, key] of Object.entries(groups)) {
+    for (const b of $$(`[data-group=${g}] button`)) {
+      b.addEventListener('click', () => {
+        if (state.exporting) return;
+        const v = b.dataset[key];
+        VIDEO[key] = key === 'size' || key === 'fps' ? Number(v) : v;
+        remember();
+        if (key === 'shape') resize();
+        if (key === 'speed' && video.play) replanPlayback();
+        syncVideoUI();
+      });
+    }
+  }
+  $('#video-key').addEventListener('click', addKeyframe);
+  $('#video-undo').addEventListener('click', undoKeyframe);
+  $('#video-clear').addEventListener('click', () => { video.keys = []; updateTrail(); updateVideoHud(); });
+  $('#video-done').addEventListener('click', finishPath);
+  $('#video-exit').addEventListener('click', () => endVideo());
+  $('#video-back').addEventListener('click', editPath);
+  $('#video-render').addEventListener('click', renderVideo);
+  $('#video-cancel').addEventListener('click', () => { video.cancel = true; });
+  $('#video-start').addEventListener('click', () => { $('#photo').close(); startVideo(); });
+  $('#video-open').addEventListener('click', () => $('#video-file').click());
+  $('#video-file').addEventListener('change', async (e) => {
+    const f = e.target.files?.[0]; e.target.value = '';
+    if (!f) return;
+    try {
+      const keys = parsePath(JSON.parse(await f.text()));
+      video.keys = keys;
+      $('#photo').close();
+      startVideo(true);
+    } catch (err) {
+      const el = $('#video-open-error'); el.hidden = false;
+      el.textContent = `Couldn't open that file: ${err.message || err}`;
+    }
+  });
+  syncVideoUI();
+}
+function syncVideoUI() {
+  for (const b of $$('[data-group=shape] button')) b.setAttribute('aria-checked', String(b.dataset.shape === VIDEO.shape));
+  for (const b of $$('[data-group=size] button')) b.setAttribute('aria-checked', String(Number(b.dataset.size) === VIDEO.size));
+  for (const b of $$('[data-group=fps] button')) b.setAttribute('aria-checked', String(Number(b.dataset.fps) === VIDEO.fps));
+  for (const b of $$('[data-group=speed] button')) b.setAttribute('aria-checked', String(b.dataset.speed === VIDEO.speed));
+  const { w, h } = videoSize();
+  $('#video-dims').textContent = `${w.toLocaleString()} × ${h.toLocaleString()} px · ${VIDEO.fps} fps · MP4`;
+  if (video.path) $('#video-info').textContent = `${video.keys.length} keyframes · ${fmtTime(video.path.duration)}`;
+}
+const fmtTime = (t) => `${Math.floor(t / 60)}:${String(Math.round(t % 60)).padStart(2, '0')}`;
+
+// ---- recording
+function toggleVideo() { if (video.on) endVideo(); else startVideo(); }
+function startVideo(review = false) {
+  if (state.loading || state.exporting) return;
+  closePopovers(); stopTour();
+  video.on = true; video.phase = 'edit';
+  $('#videohud').hidden = false;
+  document.body.classList.add('video-on');
+  resize();
+  updateTrail();
+  updateVideoHud();
+  updateWalkHint();
+  const ready = () => { if (review && video.on) finishPath(false); };
+  if (state.walking) ready();
+  else {
+    requestLook();
+    setActivePreset(null);
+    goTo(walkStartPose(), 1.0, () => { enterWalk(); ready(); });
+  }
+}
+function endVideo() {
+  if (!video.on || state.exporting) return;
+  if (video.phase === 'review') editPath();
+  video.on = false;
+  $('#videohud').hidden = true;
+  document.body.classList.remove('video-on');
+  trail.visible = false;
+  resize();
+  updateWalkHint();
+}
+function updateVideoHud() {
+  const n = video.keys.length;
+  $('#video-count').textContent = n === 0
+    ? (isTouch || isLocked() ? 'Move to the first view, press K' : 'Click the view to look around · K adds a keyframe')
+    : `${n} keyframe${n === 1 ? '' : 's'}${n < 2 ? ' · add one more' : ' · Enter when done'}`;
+  $('#video-undo').disabled = $('#video-clear').disabled = n === 0;
+  $('#video-done').disabled = n < 2;
+}
+const _dir = new THREE.Vector3();
+function addKeyframe() {
+  if (!video.on || !state.walking || video.phase !== 'edit') return;
+  camera.updateMatrixWorld();
+  const dir = camera.getWorldDirection(V3());
+  // the point of interest: whatever is in the middle of the view (a stand, else the floor)
+  const r = canvas.getBoundingClientRect();
+  let d = blockAt(r.left + r.width / 2, r.top + r.height / 2)?.dist;
+  if (d == null) {
+    floorPlane.constant = -floorY;
+    const hit = new THREE.Ray(camera.position, dir).intersectPlane(floorPlane, V3());
+    if (hit) d = hit.distanceTo(camera.position);
+  }
+  d = THREE.MathUtils.clamp(d ?? 10, 2, 40);
+  const r3 = (v) => [v.x, v.y, v.z].map((x) => Math.round(x * 1000) / 1000);
+  const key = { position: r3(camera.position), lookAt: r3(camera.position.clone().addScaledVector(dir, d)), fov: Math.round(camera.fov * 10) / 10 };
+  const last = video.keys.at(-1);
+  if (last) {                                       // the same view twice adds nothing
+    const lp = V3(...last.position), ld = V3(...last.lookAt).sub(lp).normalize();
+    if (lp.distanceTo(camera.position) < 0.05 && ld.angleTo(dir) < 0.02 && Math.abs(last.fov - key.fov) < 0.5) { flashHud(); return; }
+  }
+  video.keys.push(key);
+  updateTrail();
+  updateVideoHud();
+  flashHud();
+}
+function flashHud() {
+  const hud = $('#videohud');
+  hud.classList.remove('flash'); void hud.offsetWidth; hud.classList.add('flash');
+}
+function undoKeyframe() {
+  if (!video.on || video.phase !== 'edit' || !video.keys.length) return;
+  video.keys.pop();
+  updateTrail();
+  updateVideoHud();
+}
+// the path so far, drawn on the floor (hidden while it plays back)
+const trail = new THREE.Group();
+trail.visible = false; trail.renderOrder = 12;
+scene.add(trail);
+const trailMat = new THREE.LineBasicMaterial({ color: 0xE60028, transparent: true, opacity: 0.95, depthTest: false });
+const trailDot = new THREE.MeshBasicMaterial({ color: 0xE60028, depthTest: false, transparent: true });
+const trailDotGeo = new THREE.CircleGeometry(0.16, 24).rotateX(-Math.PI / 2);
+function updateTrail() {
+  for (const c of [...trail.children]) { trail.remove(c); if (c.isLine) c.geometry.dispose(); }
+  trail.visible = video.on && video.phase === 'edit';
+  const keys = video.keys;
+  if (!keys.length) return;
+  const y = floorY + 0.03;
+  for (const k of keys) {
+    const dot = new THREE.Mesh(trailDotGeo, trailDot);
+    dot.position.set(k.position[0], y, k.position[2]); dot.renderOrder = 12;
+    trail.add(dot);
+    const a = V3(k.position[0], y, k.position[2]), b = V3(k.lookAt[0], y, k.lookAt[2]).sub(a);
+    if (b.lengthSq() > 1e-6) {                       // a short tick: which way that keyframe looks
+      const tick = new THREE.Line(new THREE.BufferGeometry().setFromPoints([a, a.clone().addScaledVector(b.normalize(), 0.7)]), trailMat);
+      tick.renderOrder = 12; trail.add(tick);
+    }
+  }
+  if (keys.length > 1) {
+    const path = buildPath(keys, VIDEO.speed), pts = [], pose = newPose();
+    const n = Math.max(40, Math.ceil(path.duration * 8));
+    for (let i = 0; i <= n; i++) { path.at((i / n) * path.duration, pose); pts.push(V3(pose.pos.x, y, pose.pos.z)); }
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), trailMat);
+    line.renderOrder = 12; trail.add(line);
+  }
+}
+
+// ---- the smoothed path
+const newPose = () => ({ pos: V3(), poi: V3(), fov: 50 });
+function parsePath(json) {
+  const list = Array.isArray(json) ? json : json?.keyframes;
+  if (!Array.isArray(list)) throw new Error('no keyframes in it');
+  const ok3 = (a) => Array.isArray(a) && a.length === 3 && a.every(Number.isFinite);
+  const keys = list.filter((k) => ok3(k?.position) && ok3(k?.lookAt)).map((k) => ({
+    position: k.position, lookAt: k.lookAt,
+    fov: THREE.MathUtils.clamp(Number.isFinite(k.fov) ? k.fov : WALK_FOV.start, WALK_FOV.min, WALK_FOV.max),
+  }));
+  if (keys.length < 2) throw new Error('a path needs at least 2 keyframes');
+  const st = json?.settings || {};
+  if (VIDEO_SHAPES[st.shape]) VIDEO.shape = st.shape;
+  if ([720, 1080, 2160].includes(st.size)) VIDEO.size = st.size;
+  if ([30, 60].includes(st.fps)) VIDEO.fps = st.fps;
+  if (VIDEO_SPEEDS[st.speed]) VIDEO.speed = st.speed;
+  return keys;
+}
+function buildPath(keys, speedName) {
+  const sp = VIDEO_SPEEDS[speedName] || VIDEO_SPEEDS.normal;
+  const n = keys.length, S = PATH_SAMPLES;
+  const P = new THREE.CatmullRomCurve3(keys.map((k) => V3(...k.position)), false, 'centripetal');
+  const Q = new THREE.CatmullRomCurve3(keys.map((k) => V3(...k.lookAt)), false, 'centripetal');
+  const F = new THREE.CatmullRomCurve3(keys.map((k) => V3(k.fov, 0, 0)), false, 'catmullrom', 0.5);
+  const tmp = V3();
+  const atU = (u, out) => {                          // u: 0 at the first keyframe, 1 at the second, ...
+    const t = THREE.MathUtils.clamp(u / (n - 1), 0, 1);
+    P.getPoint(t, out.pos); Q.getPoint(t, out.poi); out.fov = F.getPoint(t, tmp).x;
+    return out;
+  };
+  const dirOf = (pose, out, prev) => {
+    out.subVectors(pose.poi, pose.pos);
+    return out.lengthSq() > 1e-6 ? out.normalize() : out.copy(prev);
+  };
+  // effort of each stretch (seconds at this speed): the slowest of moving, turning and zooming
+  const segs = [];
+  const a = newPose(), b = newPose(), da = V3(0, 0, -1), db = V3();
+  for (let i = 0; i < n - 1; i++) {
+    const cum = new Float64Array(S + 1);
+    atU(i, a); dirOf(a, da, da);
+    for (let k = 1; k <= S; k++) {
+      atU(i + k / S, b); dirOf(b, db, da);
+      const e = Math.max(a.pos.distanceTo(b.pos) / sp.move, THREE.MathUtils.radToDeg(da.angleTo(db)) / sp.turn, Math.abs(b.fov - a.fov) / sp.zoom);
+      cum[k] = cum[k - 1] + e;
+      a.pos.copy(b.pos); a.poi.copy(b.poi); a.fov = b.fov; da.copy(db);
+    }
+    segs.push({ cum, total: cum[S], D: Math.max(cum[S], 0.8) });
+  }
+  // ease in / out: the first and last stretch start / end at rest, so give them a little longer
+  if (segs.length === 1) segs[0].D *= 1.5;
+  else { segs[0].D *= 1.3; segs.at(-1).D *= 1.3; }
+  const T = [0];
+  for (const sg of segs) T.push(T.at(-1) + sg.D);
+  // pace (keyframes per second) at each keyframe: monotone cubic (Fritsch-Butland), 0 at both ends
+  const m = new Float64Array(n);
+  for (let i = 1; i < n - 1; i++) {
+    const h0 = segs[i - 1].D, h1 = segs[i].D, w1 = 2 * h1 + h0, w2 = h1 + 2 * h0;
+    m[i] = (w1 + w2) / (w1 * h0 + w2 * h1);
+  }
+  const end = T.at(-1);
+  const duration = end + PATH_HOLD * 2;
+  const at = (time, out) => {
+    const t = THREE.MathUtils.clamp(time - PATH_HOLD, 0, end);
+    let i = 0;
+    while (i < segs.length - 1 && t > T[i + 1]) i++;
+    const sg = segs[i], s = THREE.MathUtils.clamp((t - T[i]) / sg.D, 0, 1);
+    const s2 = s * s, s3 = s2 * s;
+    let sigma = (s3 - 2 * s2 + s) * sg.D * m[i] + (-2 * s3 + 3 * s2) + (s3 - s2) * sg.D * m[i + 1];
+    sigma = THREE.MathUtils.clamp(sigma, 0, 1);
+    let u;
+    if (sg.total < 1e-6) u = i + sigma;
+    else {                                           // effort -> spline parameter
+      const target = sigma * sg.total, c = sg.cum;
+      let lo = 0, hi = S;
+      while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (c[mid] <= target) lo = mid; else hi = mid; }
+      const span = c[hi] - c[lo];
+      u = i + (lo + (span > 1e-9 ? (target - c[lo]) / span : 0)) / S;
+    }
+    return atU(u, out);
+  };
+  return { at, duration };
+}
+const _look = V3();
+function applyPose(pose) {
+  camera.position.copy(pose.pos);
+  camera.up.set(0, 1, 0);
+  if (_look.subVectors(pose.poi, pose.pos).lengthSq() > 1e-4) camera.lookAt(pose.poi);
+  camera.fov = pose.fov;
+  camera.updateProjectionMatrix();
+}
+
+// ---- playback (preview) and the video panel
+function finishPath(save = true) {
+  if (!video.on || !state.walking || video.keys.length < 2) return;
+  if (isLocked()) document.exitPointerLock();
+  walk.keys.clear(); walk.target = null; marker.visible = false;
+  if (save) savePathFile();
+  video.phase = 'review';
+  video.saved = { pos: camera.position.clone(), fov: camera.fov };
+  trail.visible = false;
+  document.body.classList.add('video-review');
+  video.path = buildPath(video.keys, VIDEO.speed);
+  video.play = { t: 0 };
+  syncVideoUI();
+  $('#video-progress').hidden = true; $('#video-bar').hidden = true;
+  $('#video').show();
+  $('#video-render').focus();
+  loadMuxer().catch(() => {});                      // fetch the MP4 writer early
+}
+function replanPlayback() {
+  const f = video.play && video.path ? video.play.t / video.path.duration : 0;
+  video.path = buildPath(video.keys, VIDEO.speed);
+  if (video.play) video.play.t = f * video.path.duration;
+}
+const _pose = newPose();
+function updateVideoPlay(dt) {
+  const p = video.play, path = video.path;
+  p.t += dt;
+  if (p.t > path.duration + 0.8) p.t = 0;           // loop, with a short pause on the last frame
+  applyPose(path.at(Math.min(p.t, path.duration), _pose));
+}
+function editPath() {
+  if (state.exporting) return;
+  video.play = null;
+  video.phase = 'edit';
+  document.body.classList.remove('video-review');
+  $('#video').close();
+  if (video.saved) { camera.position.copy(video.saved.pos); setFov(walkFov); }
+  camera.rotation.set(walk.pitch, walk.yaw, 0, 'YXZ');
+  updateTrail();
+  updateVideoHud();
+}
+function savePathFile() {
+  const data = {
+    app: 'B10 Showcase', kind: 'camera-path', version: 1, saved: new Date().toISOString(),
+    settings: { shape: VIDEO.shape, size: VIDEO.size, fps: VIDEO.fps, speed: VIDEO.speed },
+    keyframes: video.keys,
+  };
+  downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), `B10-Showcase_path_${fileStamp()}.json`);
+}
+function loadMuxer() { return (video.muxer ||= import(MP4_MUXER).catch((e) => { video.muxer = null; throw e; })); }
+
+// ---- rendering: every frame drawn at full quality (2x supersampled up to 1080p), encoded with
+// the browser's own video encoder (WebCodecs) and packed into an MP4
+async function pickCodec(w, h, fps) {
+  const bitrate = Math.round(THREE.MathUtils.clamp(w * h * fps * 0.24, 8e6, 80e6));
+  const mbs = Math.ceil(w / 16) * Math.ceil(h / 16), rate = mbs * fps;
+  const levels = [[0x1F, 3600, 108000], [0x20, 5120, 216000], [0x28, 8192, 245760], [0x2A, 8704, 522240],
+    [0x32, 22080, 589824], [0x33, 36864, 983040], [0x34, 36864, 2073600], [0x3C, 139264, 4177920]];
+  const avc = levels.filter(([, f, r]) => mbs <= f && rate <= r).slice(0, 2)
+    .map(([l]) => [`avc1.6400${l.toString(16).toUpperCase().padStart(2, '0')}`, 'avc']);
+  const candidates = [...avc, ['vp09.00.51.08', 'vp9'], ['av01.0.12M.08', 'av1']];
+  for (const [codec, mux] of candidates) {
+    const config = { codec, width: w, height: h, bitrate, framerate: fps, latencyMode: 'quality', ...(mux === 'avc' ? { avc: { format: 'avc' } } : {}) };
+    try { if ((await VideoEncoder.isConfigSupported(config)).supported) return { config, mux }; } catch { /* try the next */ }
+  }
+  return null;
+}
+async function renderVideo() {
+  if (state.exporting || !video.on || video.phase !== 'review' || video.keys.length < 2) return;
+  const dlg = $('#video'), prog = $('#video-progress'), bar = $('#video-bar'), barFill = bar.firstElementChild;
+  const say = (t) => { prog.hidden = false; prog.textContent = t; };
+  if (!('VideoEncoder' in window) || !('VideoFrame' in window)) {
+    say('This browser can’t make videos. Please use a recent Chrome, Edge or Safari.');
+    return;
+  }
+  const { w, h } = videoSize(), fps = VIDEO.fps;
+  say('Preparing…');
+  let Mp4;
+  try { Mp4 = await loadMuxer(); } catch { say('Couldn’t load the video writer. Check the internet connection and try again.'); return; }
+  const codec = await pickCodec(w, h, fps);
+  if (!codec) { say(`This browser can’t encode ${w} × ${h} video. Try a smaller size.`); return; }
+
+  const gl = renderer.getContext();
+  const maxSide = Math.min(gl.getParameter(gl.MAX_RENDERBUFFER_SIZE), gl.getParameter(gl.MAX_VIEWPORT_DIMS)[0], 4096);
+  const ss = Math.max(w, h) * 2 <= maxSide ? 2 : 1;  // supersample when it fits
+  const path = buildPath(video.keys, VIDEO.speed);
+  const frames = Math.max(2, Math.round(path.duration * fps));
+  const out = document.createElement('canvas'); out.width = w; out.height = h;
+  const ctx = out.getContext('2d', { alpha: false });
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+
+  const muxer = new Mp4.Muxer({ target: new Mp4.ArrayBufferTarget(), video: { codec: codec.mux, width: w, height: h, frameRate: fps }, fastStart: 'in-memory', firstTimestampBehavior: 'offset' });
+  let encErr = null;
+  const encoder = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: (e) => { encErr = e; } });
+  encoder.configure(codec.config);
+
+  state.exporting = true; video.cancel = false;
+  const playing = video.play; video.play = null;
+  dlg.classList.add('busy');
+  $('#video-render').disabled = $('#video-back').disabled = true;
+  $('#video-cancel').hidden = false;
+  bar.hidden = false; barFill.style.width = '0';
+  const savedRatio = renderer.getPixelRatio();
+  let error = null, done = 0;
+  const t0 = performance.now();
+  try {
+    renderer.setPixelRatio(1);
+    renderer.setSize(w * ss, h * ss, false);         // the on-screen canvas keeps its size: it shows the frames
+    camera.aspect = w / h;
+    for (let f = 0; f < frames; f++) {
+      if (video.cancel) break;
+      if (encErr) throw encErr;
+      applyPose(path.at(f / fps, _pose));
+      renderer.setRenderTarget(null);
+      renderer.render(scene, camera);
+      ctx.drawImage(canvas, 0, 0, w * ss, h * ss, 0, 0, w, h);    // same task as the draw: still there
+      const frame = new VideoFrame(out, { timestamp: Math.round((f * 1e6) / fps), duration: Math.round(1e6 / fps) });
+      encoder.encode(frame, { keyFrame: f % (fps * 2) === 0 });
+      frame.close();
+      done = f + 1;
+      while (encoder.encodeQueueSize > 4 && !encErr) await new Promise((r) => setTimeout(r, 2));
+      if (f % 3 === 0 || f === frames - 1) {
+        const pct = done / frames, left = ((performance.now() - t0) / done) * (frames - done) / 1000;
+        barFill.style.width = `${(pct * 100).toFixed(1)}%`;
+        prog.hidden = false;
+        prog.textContent = `Rendering… frame ${done} of ${frames}` + (done > 10 ? ` · about ${fmtTime(Math.max(1, left))} left` : '');
+        await nextTask();
+      }
+    }
+    if (!video.cancel) {
+      prog.textContent = 'Finishing…';
+      await encoder.flush();
+      if (encErr) throw encErr;
+      muxer.finalize();
+    }
+  } catch (e) {
+    error = e;
+  } finally {
+    try { if (encoder.state !== 'closed') encoder.close(); } catch { /* already closed */ }
+    renderer.setPixelRatio(savedRatio);
+    resize();
+    state.exporting = false;
+    video.play = playing || { t: 0 };
+    dlg.classList.remove('busy');
+    $('#video-render').disabled = $('#video-back').disabled = false;
+    $('#video-cancel').hidden = true;
+    bar.hidden = true;
+    out.width = out.height = 0;
+  }
+  if (error) { console.error('video export', error); say(`Couldn’t make the video (${error.message || error}). Try a smaller size.`); return; }
+  if (video.cancel) { say('Stopped. Nothing was saved.'); return; }
+  const name = `B10-Showcase_video_${w}x${h}_${fps}fps_${fileStamp()}.mp4`;
+  downloadBlob(new Blob([muxer.target.buffer], { type: 'video/mp4' }), name);
+  say(`Saved ${name}`);
+}
+
 // ------------------------------------------------------------------ loop
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1);
   if (state.loading || state.exporting) return;
-  if (state.tour) updateTour(dt);
+  if (video.play) updateVideoPlay(dt);
+  else if (state.tour) updateTour(dt);
   else if (state.fly) {
     const f = state.fly;
     f.t += dt;
@@ -1654,5 +2162,5 @@ renderer.setAnimationLoop(() => {
 });
 controls.addEventListener('start', () => { stopTour(); state.fly = null; setActivePreset(null); closePopovers(); });
 
-if (new URLSearchParams(location.search).has('debug')) window.b10 = { camera, controls, layers, zones, labelObjs, state, cut, walk, enterWalk, exitWalk, poses, zonePose, fitPoseToLimits, clampOrbit, blockAt, focusBlock, go, setHoverBlock, scene, renderer, renderOutline };
+if (new URLSearchParams(location.search).has('debug')) window.b10 = { camera, controls, layers, zones, labelObjs, state, cut, walk, enterWalk, exitWalk, poses, zonePose, fitPoseToLimits, clampOrbit, blockAt, focusBlock, go, setHoverBlock, scene, renderer, renderOutline, video, VIDEO, buildPath, startVideo, addKeyframe, finishPath, renderVideo, editPath, endVideo };
 boot();

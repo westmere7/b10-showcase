@@ -7,7 +7,7 @@
   <meta name="description" content="Interactive 3D floor plan of the B10 sports hall showcase for RMIT Vietnam Experience Day 2026, covering SSET, SCD and TBS.">
   <meta name="theme-color" content="#000054">
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-  <link rel="stylesheet" href="assets/style.css?v=20261113e">
+  <link rel="stylesheet" href="assets/style.css?v=20261113f">
   <script type="importmap">
     {
       "imports": {
@@ -31,6 +31,7 @@
       <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18c1.2 0 1.8-.8 1.8-1.7 0-1.3-1-1.6-1-2.8 0-1 .8-1.7 1.8-1.7H17a4 4 0 0 0 4-4C21 6.4 17 3 12 3Z" /><circle cx="7.5" cy="11" r="1" /><circle cx="10" cy="7" r="1" /><circle cx="15" cy="7.5" r="1" /></symbol>
       <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4" /></symbol>
       <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z" /><circle cx="12" cy="13" r="3.5" /></symbol>
+      <symbol id="i-film" viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2" /><path d="m16 10.5 5-3v9l-5-3" /></symbol>
       <symbol id="i-help"viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5v.7M12 17h.01" /></symbol>
       <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></symbol>
       <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14" /></symbol>
@@ -64,7 +65,7 @@
     <span class="sep"></span>
     <button class="tool" id="btn-shadows" data-tip="Shadows (L)" data-tip-pos="below" aria-pressed="true"><svg><use href="#i-sun"/></svg></button>
     <button class="tool" id="btn-layers" data-tip="Display: show / hide, tint" data-tip-pos="below" aria-haspopup="dialog" aria-controls="pop-layers"><svg><use href="#i-layers"/></svg></button>
-    <button class="tool" id="btn-photo" data-tip="Save photo (C)" data-tip-pos="below" aria-haspopup="dialog"><svg><use href="#i-camera"/></svg></button>
+    <button class="tool" id="btn-photo" data-tip="Capture: photo (C) · video (V)" data-tip-pos="below" aria-haspopup="dialog"><svg><use href="#i-camera"/></svg></button>
     <button class="tool" id="btn-help" data-tip="How to navigate" data-tip-pos="below"><svg><use href="#i-help"/></svg></button>
   </div>
 
@@ -72,7 +73,7 @@
   <nav class="pill rail" aria-label="Views">
     <div id="presets" class="rail-group"></div>
     <span class="sep h"></span>
-    <button class="tool" id="btn-walk" data-tip="Walk mode · 1.7 m eye level (V)"><svg><use href="#i-walk"/></svg><span class="tool-label">Walk</span></button>
+    <button class="tool" id="btn-walk" data-tip="Walk mode · 1.7 m eye level (F)"><svg><use href="#i-walk"/></svg><span class="tool-label">Walk</span></button>
     <button class="tool" id="btn-tour" data-tip="Guided tours (T)" aria-haspopup="menu" aria-expanded="false"><svg><use href="#i-play"/></svg><span class="tool-label">Tour</span></button>
   </nav>
 
@@ -102,6 +103,18 @@
     <button class="hud-btn" id="tour-stop">Stop</button>
   </div>
   <div id="walkhint" class="pill hud" hidden></div>
+  <div id="videohud" class="pill hud dark videohud" hidden>
+    <span class="rec-dot" aria-hidden="true"></span>
+    <div class="hud-text"><strong>Video path</strong><span id="video-count"></span></div>
+    <div class="segmented dark" role="radiogroup" aria-label="Video shape" data-group="shape">
+      <button role="radio" data-shape="16:9">16:9</button><button role="radio" data-shape="9:16">9:16</button><button role="radio" data-shape="1:1">1:1</button>
+    </div>
+    <button class="hud-btn" id="video-key">Keyframe <kbd>K</kbd></button>
+    <button class="hud-btn" id="video-undo">Undo</button>
+    <button class="hud-btn" id="video-clear">Clear</button>
+    <button class="hud-btn primary" id="video-done">Done <kbd>Enter</kbd></button>
+    <button class="hud-btn icon" id="video-exit" aria-label="Leave video mode (V)" title="Leave video mode (V)"><svg><use href="#i-close"/></svg></button>
+  </div>
   <div id="crosshair" class="crosshair" hidden></div>
 
   <div id="loading" class="loading" role="status" aria-live="polite">
@@ -150,7 +163,8 @@
         <ul>
           <li><kbd>1</kbd> SSET · <kbd>2</kbd> SCD · <kbd>3</kbd> TBS</li>
           <li><kbd>Esc</kbd> back to Overview · <kbd>Space</kbd> top view</li>
-          <li><kbd>V</kbd> walk mode · <kbd>T</kbd> hall tour · <kbd>L</kbd> shadows on/off · <kbd>C</kbd> save a photo</li>
+          <li><kbd>F</kbd> walk mode · <kbd>T</kbd> hall tour · <kbd>L</kbd> shadows on/off</li>
+          <li><kbd>C</kbd> save a photo · <kbd>V</kbd> record a video path</li>
           <li>Any click or key stops a tour</li>
         </ul>
       </div>
@@ -158,8 +172,13 @@
     <form method="dialog"><button class="btn primary">Got it</button></form>
   </dialog>
 
-  <dialog id="photo" class="help photo" aria-label="Save photo">
-    <header><h2>Save photo</h2></header>
+  <dialog id="photo" class="help photo" aria-label="Capture">
+    <header class="cap-head"><h2>Capture</h2>
+      <div class="segmented" role="radiogroup" aria-label="Capture mode" id="cap-mode">
+        <button role="radio" data-mode="photo">Photo</button><button role="radio" data-mode="video">Video</button>
+      </div>
+    </header>
+    <div id="cap-photo">
     <p class="note">Saves exactly what you see now, at the highest quality (anti-aliased and supersampled). Labels and toolbars are left out.</p>
     <div class="row"><span>Size</span>
       <div class="segmented" role="radiogroup" aria-label="Photo size" id="photo-scale">
@@ -174,9 +193,48 @@
     </div>
     <p class="photo-progress" id="photo-progress" role="status" aria-live="polite" hidden></p>
     <div class="photo-actions"><button class="btn" id="photo-cancel">Cancel</button><button class="btn primary" id="photo-save">Save photo</button></div>
+    </div>
+    <div id="cap-video" hidden>
+      <p class="note">Record a camera path in walk mode: move to each view you want and press <kbd>K</kbd> to keyframe it. Press <kbd>Enter</kbd> when you're done: the path is saved as a file, then plays back smoothly so you can render it as an MP4 video.</p>
+      <p class="photo-progress" id="video-open-error" role="status" hidden></p>
+      <div class="photo-actions"><button class="btn" id="video-open">Open a saved path…</button><button class="btn primary" id="video-start">Start recording <kbd>V</kbd></button></div>
+      <input type="file" id="video-file" accept=".json,application/json" hidden>
+    </div>
+  </dialog>
+
+  <dialog id="video" class="help photo video-panel" aria-label="Video">
+    <header class="cap-head"><h2>Video</h2><span class="video-info" id="video-info"></span></header>
+    <div class="row"><span>Shape</span>
+      <div class="segmented" role="radiogroup" aria-label="Video shape" data-group="shape">
+        <button role="radio" data-shape="16:9">16:9</button><button role="radio" data-shape="9:16">9:16</button><button role="radio" data-shape="1:1">1:1</button>
+      </div>
+    </div>
+    <div class="row"><span>Size</span>
+      <div class="segmented" role="radiogroup" aria-label="Video size" data-group="size">
+        <button role="radio" data-size="720">720p</button><button role="radio" data-size="1080">1080p</button><button role="radio" data-size="2160">4K</button>
+      </div>
+    </div>
+    <div class="row"><span>Frame rate</span>
+      <div class="segmented" role="radiogroup" aria-label="Frame rate" data-group="fps">
+        <button role="radio" data-fps="30">30 fps</button><button role="radio" data-fps="60">60 fps</button>
+      </div>
+    </div>
+    <div class="row"><span>Speed</span>
+      <div class="segmented" role="radiogroup" aria-label="Camera speed" data-group="speed">
+        <button role="radio" data-speed="slow">Slow</button><button role="radio" data-speed="normal">Normal</button><button role="radio" data-speed="fast">Fast</button>
+      </div>
+    </div>
+    <p class="photo-dims" id="video-dims"></p>
+    <div class="video-bar" id="video-bar" hidden><div></div></div>
+    <p class="photo-progress" id="video-progress" role="status" aria-live="polite" hidden></p>
+    <div class="photo-actions">
+      <button class="btn" id="video-back">Edit path</button>
+      <button class="btn" id="video-cancel" hidden>Stop</button>
+      <button class="btn primary" id="video-render">Render video <kbd>Enter</kbd></button>
+    </div>
   </dialog>
 
   <noscript><p class="noscript">This 3D viewer needs JavaScript and a browser that supports WebGL.</p></noscript>
-  <script type="module" src="assets/app.js?v=20261113e"></script>
+  <script type="module" src="assets/app.js?v=20261113f"></script>
 </body>
 </html>
