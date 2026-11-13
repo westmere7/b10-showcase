@@ -787,6 +787,7 @@ function fitPoseToLimits(pose) {
   return { ...pose, pos, target };
 }
 function goTo(pose, dur = 1.3, after) {
+  if (topv.on && !pose.top) leaveTop();
   if (state.walking && !pose.walk) exitWalk(false);
   stopOrbitMomentum();
   pose = fitPoseToLimits(pose);
@@ -801,6 +802,7 @@ function go(name) {
   closePopovers();
   setActivePreset(name);
   if (name === 'entrance') { requestLook(); goTo(poses.entrance(), 1.3, () => enterWalk()); return; }
+  if (name === 'top') { enterTop(); history.replaceState(null, '', '#top'); return; }
   const pose = name.startsWith('zone') ? zonePose(Number(name.slice(4))) : poses[name]();
   goTo(pose);
   history.replaceState(null, '', `#${name}`);
@@ -811,6 +813,156 @@ function applyHash() {
   if (h.startsWith('tour-') && tours[h.slice(5)]) return startTour(h.slice(5));
   if (poses[h] || /^zone[123]$/.test(h)) go(h);
 }
+
+// ------------------------------------------------------------------ top view mode
+// Top view is a mode of its own: the camera looks straight down, north up, and only pans and
+// zooms (drag, wheel / pinch, + / −; clicking a stand or zone frames it from above). Isometric (the
+// default) is a flat, true-to-scale plan; Perspective uses the normal lens. Isometric is a very
+// long lens from far above (1.2° field of view: under 0.3% size difference between the floor and
+// the top of a 6 m wall), so picking, outlines, labels, photos and videos all keep working with
+// the one camera. Switching animates the lens and the distance together, keeping the floor fixed.
+const TOP_FOV = { iso: 1.2, persp: ORBIT_FOV };
+const TOP_SIZE = { min: 2.5, max: 45 };          // half the visible floor height (m)
+const topv = { on: false, iso: true, center: V3(), size: 15, goal: { center: V3(), size: 15 }, fov: ORBIT_FOV, lens: null, pointers: new Map() };
+try { topv.iso = localStorage.getItem('b10-top-iso') !== '0'; } catch { /* storage blocked */ }
+const topDist = (size, fov) => size / Math.tan(THREE.MathUtils.degToRad(fov) / 2);
+function topFit(box) {                            // the view centre and size that frame a box from above
+  const b = box || walkBox;
+  const w = b.max.x - b.min.x, d = b.max.z - b.min.z;
+  return { center: b.getCenter(V3()).setY(floorY), size: Math.max(d / 2, w / 2 / camera.aspect) };
+}
+function enterTop() {
+  if (state.walking) exitWalk(false);
+  stopTour();
+  setActivePreset('top');
+  if (topv.on) { topFrame(null); return; }
+  const f = topFit(); f.size *= 1.06;
+  const d = topDist(f.size, ORBIT_FOV);
+  // fly to the straight-down view with the normal lens, then take over (and switch lens if wanted)
+  goTo({ pos: f.center.clone().add(V3(0, d, 0.01)), target: f.center.clone(), top: true }, 1.3, () => startTop(f));
+}
+function startTop(f) {
+  topv.on = true;
+  topv.center.copy(f.center); topv.size = f.size;
+  topv.goal.center.copy(f.center); topv.goal.size = f.size;
+  topv.fov = ORBIT_FOV;
+  topv.lens = topv.iso ? { from: ORBIT_FOV, to: TOP_FOV.iso, t: 0 } : null;
+  controls.enabled = false;
+  stage.classList.add('top-mode');
+  applyTop();
+  buildNavpad();
+}
+function leaveTop() {
+  if (!topv.on) return;
+  // back to the normal lens at the same framing, so the next flight starts from a sensible place
+  topv.on = false; topv.lens = null; topv.pointers.clear();
+  const d = topDist(topv.size, ORBIT_FOV);
+  camera.up.set(0, 1, 0);
+  camera.fov = ORBIT_FOV; camera.near = 0.05; camera.far = 800;
+  camera.position.set(topv.center.x, floorY + d, topv.center.z + 0.01);
+  controls.target.set(topv.center.x, floorY, topv.center.z);
+  camera.lookAt(controls.target);
+  camera.updateProjectionMatrix();
+  controls.enabled = true;
+  stopOrbitMomentum();
+  stage.classList.remove('top-mode');
+  buildNavpad();
+}
+function setTopIso(iso) {
+  topv.iso = iso;
+  try { localStorage.setItem('b10-top-iso', iso ? '1' : '0'); } catch { /* ignore */ }
+  for (const b of $$('.proj button')) b.setAttribute('aria-checked', String(b.dataset.iso === String(iso)));
+  if (topv.on) topv.lens = { from: topv.fov, to: iso ? TOP_FOV.iso : TOP_FOV.persp, t: 0 };
+}
+function clampTop(g) {
+  g.size = THREE.MathUtils.clamp(g.size, TOP_SIZE.min, TOP_SIZE.max);
+  const m = 12;                                   // the view centre stays over the hall
+  g.center.x = THREE.MathUtils.clamp(g.center.x, walkBox.min.x - m, walkBox.max.x + m);
+  g.center.z = THREE.MathUtils.clamp(g.center.z, walkBox.min.z - m, walkBox.max.z + m);
+}
+function topFrame(box, pad = 1.06) {              // frame a box (null = the whole hall), eased
+  const f = topFit(box);
+  topv.goal.center.copy(f.center);
+  topv.goal.size = Math.max(f.size * pad, box ? 4 : 0);
+  clampTop(topv.goal);
+}
+function topWorldAt(clientX, clientY, g = topv.goal) {   // the floor point under a screen point
+  const r = canvas.getBoundingClientRect();
+  const nx = ((clientX - r.left) / r.width) * 2 - 1, ny = -(((clientY - r.top) / r.height) * 2 - 1);
+  return { nx, ny, x: g.center.x + nx * camera.aspect * g.size, z: g.center.z - ny * g.size };
+}
+function topZoom(f, clientX, clientY) {           // zoom about a screen point (default: the middle)
+  const r = canvas.getBoundingClientRect();
+  const p = topWorldAt(clientX ?? r.left + r.width / 2, clientY ?? r.top + r.height / 2);
+  topv.goal.size *= f;
+  clampTop(topv.goal);
+  topv.goal.center.x = p.x - p.nx * camera.aspect * topv.goal.size;
+  topv.goal.center.z = p.z + p.ny * topv.goal.size;
+  clampTop(topv.goal);
+}
+function topPan(dxPx, dyPx, instant = true) {    // drag: the floor follows the pointer
+  const per = (2 * topv.goal.size) / canvas.getBoundingClientRect().height;
+  topv.goal.center.x -= dxPx * per;
+  topv.goal.center.z -= dyPx * per;
+  clampTop(topv.goal);
+  if (instant) topv.center.copy(topv.goal.center);
+}
+function topWheel(e) {
+  const px = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? canvas.clientHeight : 1;
+  const dx = e.deltaX * px, dy = e.deltaY * px;
+  if (e.ctrlKey) topZoom(Math.exp(dy * 0.01), e.clientX, e.clientY);            // pinch
+  else if (isMouseWheel(e)) topZoom(Math.exp(Math.sign(dy) * 0.18), e.clientX, e.clientY);
+  else topPan(-dx, -dy);                                                        // two-finger swipe
+}
+function updateTop(dt) {
+  const k = Math.min(1, dt * 10);
+  topv.center.lerp(topv.goal.center, k);
+  topv.size += (topv.goal.size - topv.size) * k;
+  if (topv.lens) {                                // lens change: log-space ease, floor framing kept
+    const L = topv.lens;
+    L.t = Math.min(1, L.t + dt / 0.9);
+    topv.fov = Math.exp(Math.log(L.from) + (Math.log(L.to) - Math.log(L.from)) * ease(L.t));
+    if (L.t >= 1) { topv.fov = L.to; topv.lens = null; }
+  }
+  applyTop();
+}
+function applyTop() {
+  if (![topv.size, topv.center.x, topv.center.z, topv.fov].every(Number.isFinite)) {   // never leave a broken view
+    const f = topFit(); f.size *= 1.06;
+    topv.center.copy(f.center); topv.size = f.size; topv.goal.center.copy(f.center); topv.goal.size = f.size;
+    topv.fov = topv.iso ? TOP_FOV.iso : TOP_FOV.persp; topv.lens = null;
+  }
+  const d = topDist(topv.size, topv.fov);
+  camera.fov = topv.fov;
+  camera.near = Math.max(0.05, d - 40); camera.far = d + 150;
+  camera.position.set(topv.center.x, floorY + d, topv.center.z);
+  camera.up.set(0, 0, -1);
+  camera.lookAt(topv.center.x, floorY, topv.center.z);
+  camera.updateProjectionMatrix();
+  controls.target.set(topv.center.x, floorY, topv.center.z);
+}
+// drag to pan (any mouse button, one finger); two fingers pinch to zoom
+canvas.addEventListener('pointerdown', (e) => {
+  if (!topv.on) return;
+  topv.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (!topv.on || !topv.pointers.has(e.pointerId)) return;
+  const prev = topv.pointers.get(e.pointerId);
+  if (topv.pointers.size === 1) { if (e.buttons || e.pointerType !== 'mouse') topPan(e.clientX - prev.x, e.clientY - prev.y); }
+  else if (topv.pointers.size === 2) {
+    const [a, b] = [...topv.pointers.entries()].map(([id, p]) => (id === e.pointerId ? { x: e.clientX, y: e.clientY } : p));
+    const [pa, pb] = [...topv.pointers.values()];
+    const d0 = Math.hypot(pa.x - pb.x, pa.y - pb.y), d1 = Math.hypot(a.x - b.x, a.y - b.y);
+    const m0 = { x: (pa.x + pb.x) / 2, y: (pa.y + pb.y) / 2 }, m1 = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    topPan(m1.x - m0.x, m1.y - m0.y);
+    if (d0 > 0 && d1 > 0) { topZoom(d0 / d1, m1.x, m1.y); topv.center.copy(topv.goal.center); topv.size = topv.goal.size; }
+  }
+  prev.x = e.clientX; prev.y = e.clientY;
+});
+for (const ev of ['pointerup', 'pointercancel']) canvas.addEventListener(ev, (e) => topv.pointers.delete(e.pointerId));
+canvas.addEventListener('contextmenu', (e) => { if (topv.on) e.preventDefault(); });
 
 // ------------------------------------------------------------------ walk mode
 const walk = { yaw: 0, pitch: 0, height: EYE, keys: new Set(), target: null, drag: null, pad: { move: 0, turn: 0 } };
@@ -1032,9 +1184,9 @@ canvas.addEventListener('pointerup', (e) => {
   if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 5 || performance.now() - d.t > 450) return;   // was a drag
   // a stand under the cursor wins; open zone floor takes you to that school
   const blk = blockAt(e.clientX, e.clientY);
-  if (blk) { focusBlock(blk); return; }
+  if (blk) { if (topv.on) topFrame(blk.block.box, 1.8); else focusBlock(blk); return; }
   const id = zoneAt(e.clientX, e.clientY);
-  if (id) { setHoverZone(null); go(`zone${id}`); }
+  if (id) { setHoverZone(null); if (topv.on) topFrame(zones[id].box, 1.08); else go(`zone${id}`); }
 });
 
 // ---- per-stand picking, hover outline and click-to-focus
@@ -1206,6 +1358,7 @@ stage.addEventListener('wheel', (e) => {     // on the parent, capture phase: ru
   e.stopImmediatePropagation();                              // keep OrbitControls' own zoom out of it
   stopTour();
   if (state.fly || video.play || state.exporting) return;
+  if (topv.on) { topWheel(e); return; }
   const px = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? canvas.clientHeight : 1;
   const dx = e.deltaX * px, dy = e.deltaY * px;
   if (state.walking && isMouseWheel(e)) { zoomWalkFov(Math.sign(dy) * 5); return; }   // mouse wheel: field of view
@@ -1260,12 +1413,12 @@ window.addEventListener('keydown', (e) => {
     if (e.code.startsWith('Arrow')) e.preventDefault();
   }
   const map = { Digit1: 'zone1', Digit2: 'zone2', Digit3: 'zone3', Numpad1: 'zone1', Numpad2: 'zone2', Numpad3: 'zone3' };   // SSET, SCD, TBS
-  if (map[e.code]) go(map[e.code]);
+  if (map[e.code]) { if (topv.on) topFrame(zones[Number(map[e.code].slice(4))].box, 1.08); else go(map[e.code]); }
   // outside walk mode: Esc goes back to the overview, Space to the top-down view
   if (!state.walking && e.code === 'Escape') go('overview');
-  if (!state.walking && e.code === 'Space' && !e.target.closest('button, a, select')) { e.preventDefault(); go('top'); }
-  if (e.key === '+' || e.key === '=') { if (state.walking) zoomWalkFov(-5); else flyForward(1); }
-  if (e.key === '-' || e.key === '_') { if (state.walking) zoomWalkFov(5); else flyForward(-1); }
+  if (!state.walking && e.code === 'Space' && !e.target.closest('button, a, select')) { e.preventDefault(); if (topv.on) setTopIso(!topv.iso); else go('top'); }
+  if (e.key === '+' || e.key === '=') { if (state.walking) zoomWalkFov(-5); else if (topv.on) topZoom(1 / 1.25); else flyForward(1); }
+  if (e.key === '-' || e.key === '_') { if (state.walking) zoomWalkFov(5); else if (topv.on) topZoom(1.25); else flyForward(-1); }
   if (e.code === 'KeyF' && !e.ctrlKey && !e.metaKey) toggleWalk();
   if (e.code === 'KeyV' && !e.ctrlKey && !e.metaKey && !e.repeat) toggleVideo();
   if (e.code === 'KeyL') setShadows(!state.shadows);
@@ -1277,6 +1430,7 @@ window.addEventListener('blur', () => walk.keys.clear());
 
 function toggleWalk() {
   closePopovers();
+  leaveTop();
   if (state.walking) { exitWalk(); return; }
   requestLook();                                   // pointer lock needs this click/key press
   setActivePreset(null);
@@ -1324,6 +1478,7 @@ const tours = {
 
 function startTour(name) {
   closePopovers();
+  leaveTop();
   if (state.walking) exitWalk(false);
   state.fly = null;
   const segs = tours[name]();
@@ -1539,7 +1694,23 @@ function buildNavpad() {
     ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => b.addEventListener(ev, end));
     pad.appendChild(b);
   };
-  if (state.walking) {
+  if (topv.on) {
+    btn('minus', 'Zoom out (−)', (s) => { if (s !== null) topZoom(s ? 1.15 : 1.012); });
+    btn('fit', 'Fit the whole hall', (s) => { if (s === true) topFrame(null); });
+    btn('plus', 'Zoom in (+)', (s) => { if (s !== null) topZoom(s ? 1 / 1.15 : 1 / 1.012); });
+    const sep = document.createElement('span'); sep.className = 'sep'; pad.appendChild(sep);
+    const seg = document.createElement('div');
+    seg.className = 'segmented proj'; seg.setAttribute('role', 'radiogroup'); seg.setAttribute('aria-label', 'Projection');
+    for (const [iso, label, tip] of [[true, 'Isometric', 'Flat, true-to-scale plan (Space)'], [false, 'Perspective', 'Normal lens, with depth (Space)']]) {
+      const b = document.createElement('button');
+      b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(topv.iso === iso));
+      b.dataset.iso = String(iso); b.dataset.tip = tip; b.dataset.tipPos = 'above';
+      b.textContent = label;
+      b.addEventListener('click', () => setTopIso(iso));
+      seg.appendChild(b);
+    }
+    pad.appendChild(seg);
+  } else if (state.walking) {
     btn('rotl', 'Turn left', (s) => { walk.pad.turn = s === null ? 0 : -1; });
     btn('up', 'Walk forward', (s) => { walk.pad.move = s === null ? 0 : 1; });
     btn('down', 'Walk back', (s) => { walk.pad.move = s === null ? 0 : -1; });
@@ -1891,7 +2062,7 @@ const fmtTime = (t) => `${Math.floor(t / 60)}:${String(Math.round(t % 60)).padSt
 function toggleVideo() { if (video.on) endVideo(); else startVideo(); }
 function startVideo(review = false) {
   if (state.loading || state.exporting) return;
-  closePopovers(); stopTour();
+  closePopovers(); stopTour(); leaveTop();
   video.on = true; video.phase = 'edit';
   $('#videohud').hidden = false;
   document.body.classList.add('video-on');
@@ -2340,6 +2511,7 @@ renderer.setAnimationLoop(() => {
     camera.lookAt(controls.target);
     if (f.t >= f.dur) { state.fly = null; stopOrbitMomentum(); controls.update(); f.after?.(); }
   } else if (state.walking) updateWalk(dt);
+  else if (topv.on) updateTop(dt);
   else { controls.update(); clampOrbit(); }
   updateCutaway(dt);
   renderer.render(scene, camera);
@@ -2348,5 +2520,5 @@ renderer.setAnimationLoop(() => {
 });
 controls.addEventListener('start', () => { stopTour(); state.fly = null; setActivePreset(null); closePopovers(); });
 
-if (new URLSearchParams(location.search).has('debug')) window.b10 = { camera, controls, layers, zones, labelObjs, state, cut, walk, enterWalk, exitWalk, poses, zonePose, fitPoseToLimits, clampOrbit, blockAt, focusBlock, go, setHoverBlock, scene, renderer, renderOutline, video, VIDEO, buildPath, startVideo, addKeyframe, finishPath, renderVideo, editPath, endVideo, updateWalk, watermarkCanvas, watermarkRect, WATERMARK };
+if (new URLSearchParams(location.search).has('debug')) window.b10 = { camera, controls, layers, zones, labelObjs, state, cut, walk, enterWalk, exitWalk, poses, zonePose, fitPoseToLimits, clampOrbit, blockAt, focusBlock, go, setHoverBlock, scene, renderer, renderOutline, video, VIDEO, buildPath, startVideo, addKeyframe, finishPath, renderVideo, editPath, endVideo, updateWalk, watermarkCanvas, watermarkRect, WATERMARK, topv, enterTop, startTop, leaveTop, updateTop, topZoom, topPan, setTopIso, topFrame, topFit, toggleWalk };
 boot();

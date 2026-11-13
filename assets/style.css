@@ -91,6 +91,12 @@ kbd {
 }
 [data-tip][data-tip-pos=below]:hover::after { left: 50%; top: calc(100% + 8px); transform: translateX(-50%); }
 [data-tip][data-tip-pos=left]:hover::after { left: auto; right: calc(100% + 10px); }
+[data-tip][data-tip-pos=above]:hover::after { left: 50%; top: auto; bottom: calc(100% + 10px); transform: translateX(-50%); }
+.navbar .proj { margin-left: 2px; }
+.navbar .proj button { position: relative; padding: 6px 10px; }
+#stage.top-mode canvas { cursor: grab; }
+#stage.top-mode canvas:active { cursor: grabbing; }
+#stage.top-mode.zone-hover canvas { cursor: pointer; }
 @media (hover: none) { [data-tip]:hover::after { display: none; } }
 
 /* bottom-right camera bar */
