@@ -336,11 +336,16 @@ const cut = {
   on: { value: 0 },                              // 0 = off (walk mode), 1 = on; eased in the render loop
   min: { value: V3() }, max: { value: V3() },     // the exhibits' box (set once everything has loaded)
   alpha: { value: CUT_ALPHA },
+  // the entrance doorway: the perforated wall behind the door frame is opened up so the walk can
+  // pass through (set in fitCutaway; an empty box until then)
+  holeMin: { value: V3(1, 1, 1) }, holeMax: { value: V3(-1, -1, -1) },
 };
 const ghosts = [];
 const CUT_GLSL = /* glsl */`
   uniform float uCutOn; uniform vec3 uCutMin; uniform vec3 uCutMax; uniform float uCutAlpha;
+  uniform vec3 uHoleMin; uniform vec3 uHoleMax;
   varying vec3 vCutPos;
+  bool inDoorway(vec3 p) { return all(greaterThan(p, uHoleMin)) && all(lessThan(p, uHoleMax)); }
   float cutAmount(vec3 p) {
     if (uCutOn <= 0.0) return 0.0;
     vec3 d = p - cameraPosition;
@@ -358,10 +363,12 @@ const CUT_GLSL = /* glsl */`
 function cutPatch(mat, ghost) {
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uCutOn = cut.on; sh.uniforms.uCutMin = cut.min; sh.uniforms.uCutMax = cut.max; sh.uniforms.uCutAlpha = cut.alpha;
+    sh.uniforms.uHoleMin = cut.holeMin; sh.uniforms.uHoleMax = cut.holeMax;
     sh.vertexShader = 'varying vec3 vCutPos;\n' + sh.vertexShader.replace('#include <project_vertex>',
       '#include <project_vertex>\n  vCutPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     sh.fragmentShader = CUT_GLSL + sh.fragmentShader
       .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+  if (inDoorway(vCutPos)) discard;
   float cutF = cutAmount(vCutPos);
   if (${ghost ? 'cutF <= 0.002' : 'cutF > 0.002'}) discard;`)
       .replace('#include <opaque_fragment>', ghost
@@ -411,6 +418,12 @@ function fitCutaway() {
   box.min.y = floorY + 0.05;
   box.max.y = Math.min(top, hallBox.max.y - 0.3);
   cut.min.value.copy(box.min); cut.max.value.copy(box.max);
+  // doorway opening (measured on the model): inside the door frame (1.0 m either side of the arrow,
+  // up to the frame's header at 2.05 m), through the plate 1.24-1.27 m past the floor edge;
+  // the outside floor (y = 0) stays
+  const cx = (walkBox.min.x + walkBox.max.x) / 2, z0 = walkBox.max.z;
+  cut.holeMin.value.set(cx - 1.0, 0.01, z0 + 1.15);
+  cut.holeMax.value.set(cx + 1.0, 2.05, z0 + 1.36);
 }
 function updateCutaway(dt) {
   const target = state.walking ? 0 : 1;
