@@ -781,7 +781,8 @@ function applyHash() {
 }
 
 // ------------------------------------------------------------------ walk mode
-const walk = { yaw: 0, pitch: 0, keys: new Set(), target: null, drag: null, pad: { move: 0, turn: 0 } };
+const walk = { yaw: 0, pitch: 0, height: EYE, keys: new Set(), target: null, drag: null, pad: { move: 0, turn: 0 } };
+const FLY_MAX = 30;                               // video mode: Q / E fly down / up, from eye level to this (m)
 const marker = new THREE.Mesh(new THREE.RingGeometry(0.22, 0.32, 40), new THREE.MeshBasicMaterial({ color: 0xE60028, transparent: true, opacity: 0.9, depthTest: false }));
 marker.rotation.x = -Math.PI / 2; marker.visible = false; marker.renderOrder = 10; scene.add(marker);
 
@@ -792,6 +793,7 @@ function enterWalk() {
   const dir = new THREE.Vector3(); camera.getWorldDirection(dir);
   walk.yaw = Math.atan2(-dir.x, -dir.z);
   walk.pitch = 0;
+  walk.height = EYE;
   setFov(walkFov);
   camera.position.y = floorY + EYE;
   clampWalk(camera.position);
@@ -836,7 +838,15 @@ function exitWalk(reframe = true) {
 function clampWalk(p) {
   p.x = THREE.MathUtils.clamp(p.x, walkBox.min.x, walkBox.max.x);
   p.z = THREE.MathUtils.clamp(p.z, walkBox.min.z, walkBox.max.z);
-  p.y = floorY + EYE;
+  p.y = floorY + walk.height;
+}
+// the roof shows while walking, but not once the camera is up above it (video mode flying)
+let roofBottom = null;
+function syncRoof() {
+  const l = layers[ROOF];
+  if (!l?.ready || !state.walking) return;
+  roofBottom ??= new THREE.Box3().setFromObject(l.group).min.y;
+  l.group.visible = camera.position.y < roofBottom - 0.3;
 }
 const floorPlane = new THREE.Plane(V3(0, 1, 0), 0);
 const raycaster = new THREE.Raycaster();
@@ -877,8 +887,13 @@ function updateWalk(dt) {
       }
     }
   }
+  if (video.on && video.phase === 'edit') {         // video mode: Q / E fly down / up, never below eye level
+    const up = (k.has('KeyE') ? 1 : 0) - (k.has('KeyQ') ? 1 : 0);
+    if (up) walk.height = THREE.MathUtils.clamp(walk.height + up * speed * dt, EYE, FLY_MAX);
+  }
   clampWalk(camera.position);
   camera.rotation.set(walk.pitch, walk.yaw, 0, 'YXZ');
+  syncRoof();
 }
 
 // ---- walk-mode input
@@ -1809,6 +1824,7 @@ function endVideo() {
   if (!video.on || state.exporting) return;
   if (video.phase === 'review') editPath();
   video.on = false;
+  walk.height = EYE;
   $('#videohud').hidden = true;
   document.body.classList.remove('video-on');
   trail.visible = false;
@@ -1818,7 +1834,7 @@ function endVideo() {
 function updateVideoHud() {
   const n = video.keys.length;
   $('#video-count').textContent = n === 0
-    ? (isTouch || isLocked() ? 'Move to the first view, press K' : 'Click the view to look around · K adds a keyframe')
+    ? (isTouch || isLocked() ? 'Move to the first view, press K · Q / E fly down / up' : 'Click the view to look around · K adds a keyframe · Q / E fly')
     : `${n} keyframe${n === 1 ? '' : 's'}${n < 2 ? ' · add one more' : ' · Enter when done'}`;
   $('#video-undo').disabled = $('#video-clear').disabled = n === 0;
   $('#video-done').disabled = n < 2;
@@ -1980,6 +1996,7 @@ function applyPose(pose) {
   if (_look.subVectors(pose.poi, pose.pos).lengthSq() > 1e-4) camera.lookAt(pose.poi);
   camera.fov = pose.fov;
   camera.updateProjectionMatrix();
+  syncRoof();
 }
 
 // ---- playback (preview) and the video panel
@@ -2162,5 +2179,5 @@ renderer.setAnimationLoop(() => {
 });
 controls.addEventListener('start', () => { stopTour(); state.fly = null; setActivePreset(null); closePopovers(); });
 
-if (new URLSearchParams(location.search).has('debug')) window.b10 = { camera, controls, layers, zones, labelObjs, state, cut, walk, enterWalk, exitWalk, poses, zonePose, fitPoseToLimits, clampOrbit, blockAt, focusBlock, go, setHoverBlock, scene, renderer, renderOutline, video, VIDEO, buildPath, startVideo, addKeyframe, finishPath, renderVideo, editPath, endVideo };
+if (new URLSearchParams(location.search).has('debug')) window.b10 = { camera, controls, layers, zones, labelObjs, state, cut, walk, enterWalk, exitWalk, poses, zonePose, fitPoseToLimits, clampOrbit, blockAt, focusBlock, go, setHoverBlock, scene, renderer, renderOutline, video, VIDEO, buildPath, startVideo, addKeyframe, finishPath, renderVideo, editPath, endVideo, updateWalk };
 boot();
