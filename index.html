@@ -7,7 +7,7 @@
   <meta name="description" content="Interactive 3D floor plan of the B10 sports hall showcase for RMIT Vietnam Experience Day 2026, covering SSET, SCD and TBS.">
   <meta name="theme-color" content="#000054">
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-  <link rel="stylesheet" href="assets/style.css?v=20261113j">
+  <link rel="stylesheet" href="assets/style.css?v=20261113k">
   <script type="importmap">
     {
       "imports": {
@@ -219,11 +219,7 @@
         <button role="radio" data-fps="30">30 fps</button><button role="radio" data-fps="60">60 fps</button>
       </div>
     </div>
-    <div class="row"><span>Speed</span>
-      <div class="segmented" role="radiogroup" aria-label="Camera speed" data-group="speed">
-        <button role="radio" data-speed="slow">Slow</button><button role="radio" data-speed="normal">Normal</button><button role="radio" data-speed="fast">Fast</button>
-      </div>
-    </div>
+    <label class="row slider"><span>Speed</span><input type="range" id="video-speed" min="0.25" max="3" step="0.05" value="1" aria-label="Camera speed"><output id="video-speed-val" for="video-speed">1.00×</output></label>
     <p class="photo-dims" id="video-dims"></p>
     <div class="video-bar" id="video-bar" hidden><div></div></div>
     <p class="photo-progress" id="video-progress" role="status" aria-live="polite" hidden></p>
@@ -235,6 +231,6 @@
   </dialog>
 
   <noscript><p class="noscript">This 3D viewer needs JavaScript and a browser that supports WebGL.</p></noscript>
-  <script type="module" src="assets/app.js?v=20261113j"></script>
+  <script type="module" src="assets/app.js?v=20261113k"></script>
 </body>
 </html>

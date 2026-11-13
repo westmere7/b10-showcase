@@ -100,7 +100,7 @@ controls.minDistance = 1.5;
 controls.maxDistance = 160;
 
 // video capture state (see "video capture"): resize() frames the view to the video's shape
-const VIDEO = { shape: '16:9', size: 1080, fps: 30, speed: 'normal' };
+const VIDEO = { shape: '16:9', size: 1080, fps: 30, speed: 1 };   // speed: x the normal pace (slider)
 const VIDEO_SHAPES = { '16:9': 16 / 9, '9:16': 9 / 16, '1:1': 1 };
 const video = { on: false, phase: 'edit', keys: [], play: null, path: null, saved: null, cancel: false, muxer: null };
 function resize() {
@@ -1725,11 +1725,10 @@ function downloadBlob(blob, name) {
 // at keyframes or sudden turns) and the camera eases in and out at the ends; a last light blur of
 // position, view direction and zoom takes off any remaining corners.
 const MP4_MUXER = 'https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/build/mp4-muxer.mjs';
-const VIDEO_SPEEDS = {                     // metres / second, degrees / second (turn and zoom)
-  slow: { move: 0.8, turn: 12, zoom: 8 },
-  normal: { move: 1.4, turn: 20, zoom: 12 },
-  fast: { move: 2.6, turn: 34, zoom: 20 },
-};
+const VIDEO_PACE = { move: 1.4, turn: 20, zoom: 12 };   // at 1x: metres / second, degrees / second (turn and zoom)
+const SPEED_MIN = 0.25, SPEED_MAX = 3;
+const OLD_SPEEDS = { slow: 0.6, normal: 1, fast: 1.8 };  // paths saved before the slider
+const toSpeed = (v) => THREE.MathUtils.clamp(Number(OLD_SPEEDS[v] ?? v) || 1, SPEED_MIN, SPEED_MAX);
 const PATH_HOLD = 0.4;                    // seconds held still on the first and last frame
 const PATH_SAMPLES = 64;                  // effort samples per stretch
 const PATH_RATE = 120;                    // the smoothed path is worked out 120 times per second of video
@@ -1745,8 +1744,9 @@ function videoSize() {
 function setupVideo() {
   try { Object.assign(VIDEO, JSON.parse(localStorage.getItem('b10-video') || '{}')); } catch { /* storage blocked */ }
   if (!VIDEO_SHAPES[VIDEO.shape]) VIDEO.shape = '16:9';
+  VIDEO.speed = toSpeed(VIDEO.speed);
   const remember = () => { try { localStorage.setItem('b10-video', JSON.stringify(VIDEO)); } catch { /* ignore */ } };
-  const groups = { shape: 'shape', size: 'size', fps: 'fps', speed: 'speed' };
+  const groups = { shape: 'shape', size: 'size', fps: 'fps' };
   for (const [g, key] of Object.entries(groups)) {
     for (const b of $$(`[data-group=${g}] button`)) {
       b.addEventListener('click', () => {
@@ -1755,11 +1755,19 @@ function setupVideo() {
         VIDEO[key] = key === 'size' || key === 'fps' ? Number(v) : v;
         remember();
         if (key === 'shape') resize();
-        if (key === 'speed' && video.play) replanPlayback();
         syncVideoUI();
       });
     }
   }
+  // speed slider: the preview follows straight away (re-planned at most once per frame)
+  let replan = 0;
+  $('#video-speed').addEventListener('input', (e) => {
+    VIDEO.speed = toSpeed(e.target.value);
+    $('#video-speed-val').textContent = `${VIDEO.speed.toFixed(2)}×`;
+    cancelAnimationFrame(replan);
+    replan = requestAnimationFrame(() => { if (video.play) replanPlayback(); syncVideoUI(); });
+  });
+  $('#video-speed').addEventListener('change', () => { remember(); if (video.play) replanPlayback(); syncVideoUI(); });
   $('#video-key').addEventListener('click', addKeyframe);
   $('#video-undo').addEventListener('click', undoKeyframe);
   $('#video-clear').addEventListener('click', () => { video.keys = []; updateTrail(); updateVideoHud(); });
@@ -1789,7 +1797,8 @@ function syncVideoUI() {
   for (const b of $$('[data-group=shape] button')) b.setAttribute('aria-checked', String(b.dataset.shape === VIDEO.shape));
   for (const b of $$('[data-group=size] button')) b.setAttribute('aria-checked', String(Number(b.dataset.size) === VIDEO.size));
   for (const b of $$('[data-group=fps] button')) b.setAttribute('aria-checked', String(Number(b.dataset.fps) === VIDEO.fps));
-  for (const b of $$('[data-group=speed] button')) b.setAttribute('aria-checked', String(b.dataset.speed === VIDEO.speed));
+  $('#video-speed').value = String(VIDEO.speed);
+  $('#video-speed-val').textContent = `${VIDEO.speed.toFixed(2)}×`;
   const { w, h } = videoSize();
   $('#video-dims').textContent = `${w.toLocaleString()} × ${h.toLocaleString()} px · ${VIDEO.fps} fps · MP4`;
   if (video.path) $('#video-info').textContent = `${video.keys.length} keyframes · ${fmtTime(video.path.duration)}`;
@@ -1918,11 +1927,11 @@ function parsePath(json) {
   if (VIDEO_SHAPES[st.shape]) VIDEO.shape = st.shape;
   if ([720, 1080, 2160].includes(st.size)) VIDEO.size = st.size;
   if ([30, 60].includes(st.fps)) VIDEO.fps = st.fps;
-  if (VIDEO_SPEEDS[st.speed]) VIDEO.speed = st.speed;
+  if (st.speed != null) VIDEO.speed = toSpeed(st.speed);
   return keys;
 }
-function buildPath(keys, speedName) {
-  const sp = VIDEO_SPEEDS[speedName] || VIDEO_SPEEDS.normal;
+function buildPath(keys, speed = 1) {
+  const f = toSpeed(speed), sp = { move: VIDEO_PACE.move * f, turn: VIDEO_PACE.turn * f, zoom: VIDEO_PACE.zoom * f };
   const n = keys.length;
   const P = new THREE.CatmullRomCurve3(keys.map((k) => V3(...k.position)), false, 'centripetal');
   const Q = new THREE.CatmullRomCurve3(keys.map((k) => V3(...k.lookAt)), false, 'centripetal');
