@@ -782,7 +782,7 @@ function applyHash() {
 
 // ------------------------------------------------------------------ walk mode
 const walk = { yaw: 0, pitch: 0, height: EYE, keys: new Set(), target: null, drag: null, pad: { move: 0, turn: 0 } };
-const FLY_MAX = 30;                               // video mode: Q / E fly down / up, from eye level to this (m)
+const FLY_MAX = 15;                               // video mode: Q / E fly down / up, from eye level to this (m), under the roof
 const marker = new THREE.Mesh(new THREE.RingGeometry(0.22, 0.32, 40), new THREE.MeshBasicMaterial({ color: 0xE60028, transparent: true, opacity: 0.9, depthTest: false }));
 marker.rotation.x = -Math.PI / 2; marker.visible = false; marker.renderOrder = 10; scene.add(marker);
 
@@ -840,14 +840,7 @@ function clampWalk(p) {
   p.z = THREE.MathUtils.clamp(p.z, walkBox.min.z, walkBox.max.z);
   p.y = floorY + walk.height;
 }
-// the roof shows while walking, but not once the camera is up above it (video mode flying)
-let roofBottom = null;
-function syncRoof() {
-  const l = layers[ROOF];
-  if (!l?.ready || !state.walking) return;
-  roofBottom ??= new THREE.Box3().setFromObject(l.group).min.y;
-  l.group.visible = camera.position.y < roofBottom - 0.3;
-}
+
 const floorPlane = new THREE.Plane(V3(0, 1, 0), 0);
 const raycaster = new THREE.Raycaster();
 function floorPointAt(clientX, clientY) {
@@ -893,7 +886,6 @@ function updateWalk(dt) {
   }
   clampWalk(camera.position);
   camera.rotation.set(walk.pitch, walk.yaw, 0, 'YXZ');
-  syncRoof();
 }
 
 // ---- walk-mode input
@@ -1996,7 +1988,6 @@ function applyPose(pose) {
   if (_look.subVectors(pose.poi, pose.pos).lengthSq() > 1e-4) camera.lookAt(pose.poi);
   camera.fov = pose.fov;
   camera.updateProjectionMatrix();
-  syncRoof();
 }
 
 // ---- playback (preview) and the video panel
