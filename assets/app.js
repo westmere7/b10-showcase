@@ -448,9 +448,10 @@ function addLayer(entry, root) {
 
 const BLOCK_MAX = 8;   // metres: anything bigger is a whole zone / row, not one stand
 // Click-to-focus is for installations, not their components: a block smaller than SMALL_BLOCK
-// (a phone, laptop or screen on a table, a stool beside a counter) joins the bigger block it
-// touches, as long as the result still fits within BLOCK_MAX. Smallest first, so chains collapse.
-const SMALL_BLOCK = 1.2, BLOCK_TOUCH = 0.05;
+// (a phone, laptop or screen on a table, a stool beside a counter, a light on a wall) joins the
+// bigger block it touches or nearly touches, as long as the result still fits within BLOCK_MAX -
+// or barely grows the bigger block (lights on a 9.6 m back wall). Smallest first, so chains collapse.
+const SMALL_BLOCK = 1.2, BLOCK_TOUCH = 0.3;   // metres: small pieces within 30 cm of a bigger block join it
 function mergeSmallBlocks(blocks) {
   const sizeOf = (b) => { const s = b.box.getSize(V3()); return Math.max(s.x, s.y, s.z); };
   const alive = new Set(blocks.keys());
@@ -463,8 +464,8 @@ function mergeSmallBlocks(blocks) {
     for (const j of alive) {
       const t = blocks[j];
       if (j === i || !t.pieces || sizeOf(t) <= sizeOf(s) || !grown.intersectsBox(t.box)) continue;
-      const u = t.box.clone().union(s.box).getSize(V3());
-      if (Math.max(u.x, u.y, u.z) > BLOCK_MAX) continue;
+      const u = t.box.clone().union(s.box).getSize(V3()), us = Math.max(u.x, u.y, u.z);
+      if (us > BLOCK_MAX && us > sizeOf(t) * 1.02) continue;
       const o = grown.clone().intersect(t.box).getSize(V3());
       const score = o.x * o.y * o.z + sizeOf(t) * 1e-6;          // most contact; ties: the bigger block
       if (score > bestScore) { best = j; bestScore = score; }
@@ -551,6 +552,7 @@ function solidMaterial(orig, tint) {
     let m;
     if (orig.alphaTest > 0 && orig.map) {           // keep cut-outs (e.g. perforated plating)
       m = orig.clone(); m.color.copy(colour); m.metalness = 0; m.roughness = 0.85;
+      delete m.userData.cut;                        // the copy needs its own cutaway shader (it isn't copied)
       m.normalMap = null; m.roughnessMap = null; m.metalnessMap = null; m.emissiveMap = null;
     } else {
       m = new THREE.MeshStandardMaterial({
@@ -1504,7 +1506,7 @@ function clampOrbit() {
 }
 
 // ------------------------------------------------------------------ photo export
-// Saves the current view (any mode, walk included) as an image up to 4x the on-screen size.
+// Saves the current view (any mode, walk included) as an image up to 8x the on-screen size.
 // Always at the highest quality: it is drawn through the same pipeline as the screen (tone
 // mapping, shadows, glass, multisample anti-aliasing) at SSAA x the final resolution, in tiles,
 // then scaled down. The screen canvas is used for the tiles (an offscreen target would skip the
