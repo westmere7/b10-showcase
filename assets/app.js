@@ -1203,7 +1203,8 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
     const mid = {};
     for (const z of d.zones) mid[z.id] = P(z.pts.reduce((s2, q) => s2 + q[0], 0) / z.pts.length, z.pts.reduce((s2, q) => s2 + q[1], 0) / z.pts.length);
     for (const q of d.points) {
-      const m = measureFrom(q.x, q.z), [sx, sy] = P(q.x, q.z), [ccx, ccy] = mid[q.zone], isDone = measure.done.has(q.key);
+      if (measure.done.has(q.key)) continue;         // done: no label, just the green ring
+      const m = measureFrom(q.x, q.z), [sx, sy] = P(q.x, q.z), [ccx, ccy] = mid[q.zone], isDone = false;
       let ox = sx - ccx, oy = sy - ccy; const l = Math.hypot(ox, oy) || 1; ox /= l; oy /= l;   // away from the zone's middle
       const text = `${isDone ? '✓ ' : ''}${q.id}  ${m.sideX.startsWith('left') ? '←' : '→'} ${m.dx.toFixed(2)}  ${m.sideZ.startsWith('top') ? '↑' : '↓'} ${m.dz.toFixed(2)}`;
       const w = g.measureText(text).width + PAD, h = PH, gap = PH + 4 * k;
@@ -1222,7 +1223,7 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
     }
   }
   // the hovered / selected / pinned corners: dotted dimension lines to the wall and the grandstand
-  const shown = d.points.filter((q) => pins.has(q.key) || q === hover || q === sel);
+  const shown = d.points.filter((q) => !measure.done.has(q.key) && (pins.has(q.key) || q === hover || q === sel));
   // the wall and grandstand front each shown corner is measured from, highlighted along their length
   const sides = new Set();
   for (const q of shown) { const m = measureFrom(q.x, q.z); sides.add(`x${m.ex}`); sides.add(`z${m.ez}`); }
@@ -1244,16 +1245,20 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
   }
   // every corner (big enough to see and tap)
   for (const q of d.points) {
-    const [sx, sy] = P(q.x, q.z), on = shown.includes(q), isDone = measure.done.has(q.key);
-    const r = (isDone || on ? 9 : 6.5) * k;
-    g.beginPath(); g.arc(sx, sy, r, 0, Math.PI * 2);
-    g.fillStyle = isDone ? '#1f9d55' : on ? '#E60028' : '#fff'; g.fill();
-    g.lineWidth = 2.5 * k; g.strokeStyle = on && isDone ? '#E60028' : isDone || on ? '#fff' : '#050038'; g.stroke();
-    if (on && isDone) { g.beginPath(); g.arc(sx, sy, r + 2.5 * k, 0, Math.PI * 2); g.lineWidth = 2.5 * k; g.strokeStyle = '#E60028'; g.stroke(); }
-    if (isDone) {                                  // a tick
+    const [sx, sy] = P(q.x, q.z), isDone = measure.done.has(q.key), on = shown.includes(q), picked = q === sel || q === hover;
+    if (isDone) {                                  // done: white with a green ring and a green tick
+      const r = 9 * k;
+      g.beginPath(); g.arc(sx, sy, r, 0, Math.PI * 2); g.fillStyle = '#fff'; g.fill();
+      g.lineWidth = 3.5 * k; g.strokeStyle = '#1f9d55'; g.stroke();
       g.beginPath(); g.moveTo(sx - 4 * k, sy + 0.3 * k); g.lineTo(sx - 1.2 * k, sy + 3.2 * k); g.lineTo(sx + 4.2 * k, sy - 3.2 * k);
-      g.lineWidth = 2.4 * k; g.strokeStyle = '#fff'; g.lineCap = 'round'; g.stroke(); g.lineCap = 'butt';
+      g.lineWidth = 2.6 * k; g.strokeStyle = '#1f9d55'; g.lineCap = 'round'; g.stroke(); g.lineCap = 'butt';
+      if (picked) { g.beginPath(); g.arc(sx, sy, r + 4 * k, 0, Math.PI * 2); g.lineWidth = 2.5 * k; g.strokeStyle = '#E60028'; g.stroke(); }
+      continue;
     }
+    const r = (on ? 9 : 6.5) * k;
+    g.beginPath(); g.arc(sx, sy, r, 0, Math.PI * 2);
+    g.fillStyle = on ? '#E60028' : '#fff'; g.fill();
+    g.lineWidth = 2.5 * k; g.strokeStyle = on ? '#fff' : '#050038'; g.stroke();
   }
 }
 // a printable plan: the whole hall, landscape at A-paper proportions, every corner measured
