@@ -1251,7 +1251,8 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
     }
   }
   // the hovered / selected / pinned corners: dotted dimension lines to the wall and the grandstand
-  const shown = d.points.filter((q) => !measure.done.has(q.key) && (pins.has(q.key) || q === hover || q === sel));
+  // (a done corner shows its lines only while hovered or selected, not as a lasting pin)
+  const shown = d.points.filter((q) => q === hover || q === sel || (!measure.done.has(q.key) && pins.has(q.key)));
   for (const q of shown) {
     const m = measureFrom(q.x, q.z), [px, py] = P(q.x, q.z), [ex] = P(m.ex, q.z), [, ey] = P(q.x, m.ez);
     g.strokeStyle = '#E60028'; g.lineCap = 'round';
