@@ -994,8 +994,10 @@ canvas.addEventListener('contextmenu', (e) => { if (topv.on) e.preventDefault();
 // sharp on top. Hovering a corner (click to pin it) shows how far it is, in metres, from the two
 // nearest physical surfaces a laser measure can be aimed at: the perforated walls for the short
 // sides, the front of the grandstands for the long sides (MEASURE_BOUNDS, measured on the model).
-const measure = { on: false, data: null, hover: null, sel: null, pins: new Set(), mouse: null, prevIso: true, all: false,
+const measure = { on: false, data: null, hover: null, sel: null, pins: new Set(), mouse: null, prevIso: true,
+  all: (() => { try { return localStorage.getItem('b10-measure-all') === '1'; } catch { return false; } })(),
   mono: (() => { try { return localStorage.getItem('b10-measure-mono') === '1'; } catch { return false; } })(),
+  areas: (() => { try { return localStorage.getItem('b10-measure-areas') === '1'; } catch { return false; } })(),
   done: (() => { try { return new Set(JSON.parse(localStorage.getItem('b10-measure-done') || '[]')); } catch { return new Set(); } })() };
 function saveDone() { try { localStorage.setItem('b10-measure-done', JSON.stringify([...measure.done])); } catch { /* storage blocked */ } }
 function toggleDone(p) {
@@ -1089,7 +1091,7 @@ function enterMeasure() {
   measure.prevIso = topv.iso; topv.iso = true;    // a true plan while measuring
   stage.classList.add('measuring'); document.body.classList.add('measuring');
   measureLayer.hidden = false;
-  $('#measurehud').hidden = false;
+  $('#measurehud').hidden = false; $('#measurerail').hidden = false;
   $('#btn-measure').classList.add('active');
   measureHint();
   syncMeasureHud();
@@ -1112,7 +1114,7 @@ function endMeasure() {
   if (topv.on && !topv.iso) topv.lens = { from: topv.fov, to: TOP_FOV.persp, t: 0 };
   stage.classList.remove('measuring'); document.body.classList.remove('measuring');
   measureLayer.hidden = true;
-  $('#measurehud').hidden = true;
+  $('#measurehud').hidden = true; $('#measurerail').hidden = true;
   $('#btn-measure').classList.remove('active');
   if (topv.on) { setActivePreset('top'); buildNavpad(); history.replaceState(null, '', '#top'); }
 }
@@ -1161,18 +1163,18 @@ function drawMeasure() {
   g.clearRect(0, 0, W, H);
   if (!topv.on || !measure.data) return;           // still flying into the top view
   updateMeasureHover();
-  drawMeasureTo(g, measureToScreen, 1, { hover: measure.hover, sel: measure.sel, pins: measure.pins, all: measure.all, mono: measure.mono });
+  drawMeasureTo(g, measureToScreen, 1, { hover: measure.hover, sel: measure.sel, pins: measure.pins, all: measure.all, mono: measure.mono, areas: measure.areas });
   stage.classList.toggle('measure-hover', !!measure.hover);
 }
 // the plan drawing, used on screen and for the printable plan. P maps floor (x, z) to pixels; k scales
 // line widths and text
-function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), all = false, mono = false } = {}) {
+function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), all = false, mono = false, areas = false } = {}) {
   // sized for an iPad held at arm's length: thick lines, big numbers (k scales everything)
   const d = measure.data, B = d.bounds, FONT = 15 * k, PH = 26 * k, PAD = 16 * k;
   // colours: the school colours, or mono (black on an almost white sheet) for the most contrast
   const C = mono
     ? { sheet: 'rgba(255,255,255,0.96)', zone: () => '#000', fill: 0, zoneW: 3.5, bound: '#000', arrow: '#000', name: () => '#000',
-      accent: '#000', ink: '#000', tri: '#000', border: '#000', leader: 'rgba(0,0,0,0.6)', done: '#000' }
+      accent: '#E60028', ink: '#000', tri: '#E60028', border: '#000', leader: 'rgba(0,0,0,0.6)', done: '#000' }
     : { sheet: 'rgba(238, 239, 243, 0.9)', zone: (z) => z.colour, fill: 0.18, zoneW: 3, bound: '#050038', arrow: '#E60028',
       name: (z) => mixHex(z.colour, '#050038', 0.5), accent: '#E60028', ink: '#050038', tri: '#E60028', border: null,
       leader: 'rgba(5,0,56,0.5)', done: '#1f9d55' };
@@ -1198,7 +1200,11 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
     const ink = C.name(z);
     g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = ink;
     g.font = `800 ${30 * k}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
-    g.fillText(z.short, tx, ty);                  // short name only
+    g.fillText(z.short, tx, areas ? ty - 12 * k : ty);   // short name only
+    if (areas) {                                  // the zone's floor area (shoelace formula)
+      g.font = `700 ${17 * k}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
+      g.fillText(`${(Math.abs(A) / 2).toFixed(2)} m²`, tx, ty + 18 * k);
+    }
   }
   g.font = `700 ${FONT}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
   const pill = (text, x, y, fg = '#050038', bg = 'rgba(255,255,255,0.96)', border = null) => {
@@ -1328,7 +1334,7 @@ async function saveMeasurePlan() {
     g.drawImage(canvas, 0, 0);                      // same task as the draw: still there
     const P = (x, z) => { _mp.set(x, floorY, z).project(camera); return [((_mp.x + 1) / 2) * Wo, ((1 - _mp.y) / 2) * Ho]; };
     const k = Wo / 1600;                           // ~7.5 pt labels once printed on A4
-    drawMeasureTo(g, P, k, { all: true, mono: measure.mono });
+    drawMeasureTo(g, P, k, { all: true, mono: measure.mono, areas: measure.areas });
     // title
     g.fillStyle = 'rgba(255,255,255,0.96)'; g.fillRect(0, 0, Wo, Ho * title);
     g.fillStyle = '#050038'; g.textAlign = 'left'; g.textBaseline = 'middle';
@@ -2035,14 +2041,28 @@ function buildUI() {
     const n = measure.done.size;
     if (n && confirm(`Clear all ${n} completed mark${n === 1 ? '' : 's'} on this device?`)) { measure.done.clear(); saveDone(); syncMeasureHud(); }
   });
-  $('#measure-all').addEventListener('click', () => { measure.all = !measure.all; $('#measure-all').setAttribute('aria-pressed', String(measure.all)); });
-  $('#measure-save').addEventListener('click', saveMeasurePlan);
-  $('#measure-mono').setAttribute('aria-pressed', String(measure.mono));
-  $('#measure-mono').addEventListener('click', () => {
-    measure.mono = !measure.mono;
-    $('#measure-mono').setAttribute('aria-pressed', String(measure.mono));
-    try { localStorage.setItem('b10-measure-mono', measure.mono ? '1' : '0'); } catch { /* ignore */ }
+  $('#measure-all').addEventListener('click', () => {
+    measure.all = !measure.all; $('#measure-all').setAttribute('aria-pressed', String(measure.all));
+    try { localStorage.setItem('b10-measure-all', measure.all ? '1' : '0'); } catch { /* ignore */ }
   });
+  $('#measure-save').addEventListener('click', saveMeasurePlan);
+  // bottom rail: colour / mono, corner distances, zone areas (also what Export A4 shows)
+  const syncRail = () => {
+    for (const b of $$('[data-mview]')) b.setAttribute('aria-checked', String((b.dataset.mview === 'mono') === measure.mono));
+    $('#measure-all').setAttribute('aria-pressed', String(measure.all));
+    $('#measure-areas').setAttribute('aria-pressed', String(measure.areas));
+  };
+  for (const b of $$('[data-mview]')) b.addEventListener('click', () => {
+    measure.mono = b.dataset.mview === 'mono';
+    try { localStorage.setItem('b10-measure-mono', measure.mono ? '1' : '0'); } catch { /* ignore */ }
+    syncRail();
+  });
+  $('#measure-areas').addEventListener('click', () => {
+    measure.areas = !measure.areas;
+    try { localStorage.setItem('b10-measure-areas', measure.areas ? '1' : '0'); } catch { /* ignore */ }
+    syncRail();
+  });
+  syncRail();
 
   // tours flyout
   const menu = $('#tour-menu');
