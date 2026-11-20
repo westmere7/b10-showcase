@@ -7,7 +7,7 @@
   <meta name="description" content="Interactive 3D floor plan of the B10 sports hall showcase for RMIT Vietnam Experience Day 2026, covering SSET, SCD and TBS.">
   <meta name="theme-color" content="#000054">
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-  <link rel="stylesheet" href="assets/style.css?v=20261113r">
+  <link rel="stylesheet" href="assets/style.css?v=20261120d">
   <script type="importmap">
     {
       "imports": {
@@ -32,6 +32,7 @@
       <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4" /></symbol>
       <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z" /><circle cx="12" cy="13" r="3.5" /></symbol>
       <symbol id="i-film" viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2" /><path d="m16 10.5 5-3v9l-5-3" /></symbol>
+      <symbol id="i-ruler" viewBox="0 0 24 24"><path d="M3 15.5 15.5 3l5.5 5.5L8.5 21z" /><path d="m7 12 2 2M10 9l2.5 2.5M13 6l2 2" /></symbol>
       <symbol id="i-help"viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5v.7M12 17h.01" /></symbol>
       <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></symbol>
       <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14" /></symbol>
@@ -75,6 +76,7 @@
     <span class="sep h"></span>
     <button class="tool" id="btn-walk" data-tip="Walk mode · 1.7 m eye level (F)"><svg><use href="#i-walk"/></svg><span class="tool-label">Walk</span></button>
     <button class="tool" id="btn-tour" data-tip="Guided tours (T)" aria-haspopup="menu" aria-expanded="false"><svg><use href="#i-play"/></svg><span class="tool-label">Tour</span></button>
+    <button class="tool" id="btn-measure" data-tip="Measure zone corners from the walls and grandstands (M)"><svg><use href="#i-ruler"/></svg><span class="tool-label">Measure</span></button>
   </nav>
 
   <!-- tour flyout -->
@@ -104,6 +106,15 @@
     <button class="hud-btn" id="tour-stop">Stop</button>
   </div>
   <div id="walkhint" class="pill hud" hidden></div>
+  <div id="measurehud" class="pill hud dark measurehud" hidden>
+    <div class="hud-text"><strong>Measure <span class="measure-progress" id="measure-progress"></span></strong><span id="measure-read"></span></div>
+    <button class="hud-btn primary" id="measure-done" aria-pressed="false" title="Mark the selected corner as done on the floor (D)" disabled>Mark done</button>
+    <button class="hud-btn" id="measure-all" aria-pressed="false" title="Label every corner with its distances">Show all</button>
+    <button class="hud-btn" id="measure-save" title="Save the whole plan with every measurement as a PNG, ready to print">Save plan</button>
+    <button class="hud-btn" id="measure-clear">Clear pins</button>
+    <button class="hud-btn" id="measure-reset" title="Clear every completed mark on this device" hidden>Reset done</button>
+    <button class="hud-btn icon" id="measure-exit" aria-label="Leave measure mode (M)" title="Leave measure mode (M)"><svg><use href="#i-close"/></svg></button>
+  </div>
   <div id="videohud" class="pill hud dark videohud" hidden>
     <span class="rec-dot" aria-hidden="true"></span>
     <div class="hud-text"><strong>Video path</strong><span id="video-count"></span></div>
@@ -172,6 +183,7 @@
           <li><kbd>1</kbd> SSET · <kbd>2</kbd> SCD · <kbd>3</kbd> TBS</li>
           <li><kbd>Esc</kbd> back to Overview · <kbd>Space</kbd> top view (again: isometric ⇄ perspective)</li>
           <li><kbd>F</kbd> walk mode · <kbd>T</kbd> hall tour · <kbd>L</kbd> shadows on/off</li>
+          <li><kbd>M</kbd> measure mode: zone corners, in metres, from the perforated walls and the grandstand fronts; click a corner, then <kbd>D</kbd> marks it done</li>
           <li><kbd>C</kbd> save a photo · <kbd>V</kbd> record a video path (<kbd>K</kbd> keyframe, <kbd>Q</kbd>/<kbd>E</kbd> fly down/up)</li>
           <li>Any click or key stops a tour</li>
         </ul>
@@ -242,6 +254,6 @@
   </dialog>
 
   <noscript><p class="noscript">This 3D viewer needs JavaScript and a browser that supports WebGL.</p></noscript>
-  <script type="module" src="assets/app.js?v=20261113r"></script>
+  <script type="module" src="assets/app.js?v=20261120d"></script>
 </body>
 </html>

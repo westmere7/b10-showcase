@@ -800,7 +800,7 @@ function fitPoseToLimits(pose) {
   return { ...pose, pos, target };
 }
 function goTo(pose, dur = 1.3, after) {
-  if (topv.on && !pose.top) leaveTop();
+  if ((topv.on || measure.on) && !pose.top) leaveTop();
   if (state.walking && !pose.walk) exitWalk(false);
   stopOrbitMomentum();
   pose = fitPoseToLimits(pose);
@@ -823,6 +823,7 @@ function go(name) {
 function applyHash() {
   const h = location.hash.slice(1);
   if (h === 'walk') return go('entrance');
+  if (h === 'measure') return enterMeasure();
   if (h.startsWith('tour-') && tours[h.slice(5)]) return startTour(h.slice(5));
   if (poses[h] || /^zone[123]$/.test(h)) go(h);
 }
@@ -840,9 +841,13 @@ const topv = { on: false, iso: true, center: V3(), size: 15, goal: { center: V3(
 try { topv.iso = localStorage.getItem('b10-top-iso') !== '0'; } catch { /* storage blocked */ }
 const topDist = (size, fov) => size / Math.tan(THREE.MathUtils.degToRad(fov) / 2);
 function topFit(box) {                            // the view centre and size that frame a box from above
-  const b = box || walkBox;
+  let b = box || walkBox, pad = 1;
+  if (!box && measure.on && measure.data) {       // measuring: the walls and grandstands, with room for labels
+    const B = measure.data.bounds;
+    b = new THREE.Box3(V3(B.x0, floorY, B.z0), V3(B.x1, floorY, B.z1)); pad = 1.16;
+  }
   const w = b.max.x - b.min.x, d = b.max.z - b.min.z;
-  return { center: b.getCenter(V3()).setY(floorY), size: Math.max(d / 2, w / 2 / camera.aspect) };
+  return { center: b.getCenter(V3()).setY(floorY), size: Math.max(d / 2, w / 2 / camera.aspect) * pad };
 }
 function enterTop() {
   if (state.walking) exitWalk(false);
@@ -866,7 +871,8 @@ function startTop(f) {
   buildNavpad();
 }
 function leaveTop() {
-  if (!topv.on) return;
+  if (!topv.on) { if (measure.on) endMeasure(); return; }
+  if (measure.on) endMeasure();
   // back to the normal lens at the same framing, so the next flight starts from a sensible place
   topv.on = false; topv.lens = null; topv.pointers.clear();
   const d = topDist(topv.size, ORBIT_FOV);
@@ -882,6 +888,7 @@ function leaveTop() {
   buildNavpad();
 }
 function setTopIso(iso) {
+  if (measure.on) return;                        // measuring is always a true plan
   topv.iso = iso;
   try { localStorage.setItem('b10-top-iso', iso ? '1' : '0'); } catch { /* ignore */ }
   for (const b of $$('.proj button')) b.setAttribute('aria-checked', String(b.dataset.iso === String(iso)));
@@ -976,6 +983,305 @@ canvas.addEventListener('pointermove', (e) => {
 });
 for (const ev of ['pointerup', 'pointercancel']) canvas.addEventListener(ev, (e) => topv.pointers.delete(e.pointerId));
 canvas.addEventListener('contextmenu', (e) => { if (topv.on) e.preventDefault(); });
+
+// ------------------------------------------------------------------ measure mode
+// For marking the zones out on the real floor. The top view, locked to Isometric (a true plan); the
+// stands fade to about 10% under a light plan sheet; the zones' outlines and every corner are drawn
+// sharp on top. Hovering a corner (click to pin it) shows how far it is, in metres, from the two
+// nearest physical surfaces a laser measure can be aimed at: the perforated walls for the short
+// sides, the front of the grandstands for the long sides (MEASURE_BOUNDS, measured on the model).
+const measure = { on: false, data: null, hover: null, sel: null, pins: new Set(), mouse: null, prevIso: true, all: false,
+  done: (() => { try { return new Set(JSON.parse(localStorage.getItem('b10-measure-done') || '[]')); } catch { return new Set(); } })() };
+function saveDone() { try { localStorage.setItem('b10-measure-done', JSON.stringify([...measure.done])); } catch { /* storage blocked */ } }
+function toggleDone(p) {
+  if (!p) return;
+  if (measure.done.has(p.key)) measure.done.delete(p.key); else measure.done.add(p.key);
+  saveDone();
+  syncMeasureHud();
+}
+function syncMeasureHud() {
+  const pts = measure.data?.points ?? [], n = pts.filter((q) => measure.done.has(q.key)).length;
+  $('#measure-progress').textContent = `${n} / ${pts.length} done`;
+  const b = $('#measure-done'), p = measure.sel;
+  b.disabled = !p;
+  b.textContent = !p ? 'Mark done' : measure.done.has(p.key) ? `${p.id} done ✓ (undo)` : `Mark ${p.id} done`;
+  b.setAttribute('aria-pressed', String(!!p && measure.done.has(p.key)));
+  $('#measure-reset').hidden = n === 0;
+}
+const measureLayer = document.createElement('canvas');
+measureLayer.className = 'measure-layer'; measureLayer.hidden = true;
+stage.appendChild(measureLayer);
+const MEASURE_SNAP = 16;                          // px: how near the pointer must be to a corner
+const MEASURE_HEIGHT = 0.3;                       // m above the floor: where the laser hits the walls and grandstands
+// The surfaces measured from (world metres, as in the model). Measured once on the model at laser
+// height: the hall and grandstands sliced 30 cm above the floor, rays cast from the middle of the hall
+// to each side, the most common hit taken (aisle gaps and the entrance step back). Each face is
+// straight along its whole length. The grandstands' bottom edge sticks out about 1.4 cm lower down.
+// Re-measure if the hall model changes.
+const MEASURE_BOUNDS = {
+  x0: -20.873,   // left perforated wall (west)
+  x1: 20.908,    // right perforated wall (east)
+  z0: -14.191,   // top grandstand front (north, stage side)
+  z1: 15.876,    // bottom grandstand front (south, entrance side)
+};
+function zoneOutline(geo) {                       // the outline of a flat zone overlay, as its corners
+  const pos = geo.attributes.position, idx = geo.index, n = (idx ? idx.count : pos.count) / 3;
+  const key = (i) => `${Math.round(pos.getX(i) * 1000)},${Math.round(pos.getZ(i) * 1000)}`;
+  const edges = new Map();
+  for (let t = 0; t < n; t++) {
+    const v = [0, 1, 2].map((k) => key(idx ? idx.getX(t * 3 + k) : t * 3 + k));
+    for (let k = 0; k < 3; k++) { const a = v[k], b = v[(k + 1) % 3], e = a < b ? `${a}|${b}` : `${b}|${a}`; edges.set(e, (edges.get(e) || 0) + 1); }
+  }
+  const adj = new Map();
+  for (const [e, c] of edges) if (c === 1) { const [a, b] = e.split('|'); (adj.get(a) || adj.set(a, []).get(a)).push(b); (adj.get(b) || adj.set(b, []).get(b)).push(a); }
+  if (!adj.size) return [];
+  const start = adj.keys().next().value, loop = [start];
+  for (let prev = null, cur = start; loop.length <= adj.size;) {
+    const next = adj.get(cur).find((x) => x !== prev);
+    if (!next || next === start) break;
+    loop.push(next); prev = cur; cur = next;
+  }
+  const pts = loop.map((s) => s.split(',').map((v) => Number(v) / 1000));
+  return pts.filter((q, i) => {                   // corners only (drop points on a straight run)
+    const a = pts[(i - 1 + pts.length) % pts.length], c = pts[(i + 1) % pts.length];
+    const cr = (q[0] - a[0]) * (c[1] - q[1]) - (q[1] - a[1]) * (c[0] - q[0]);
+    return Math.abs(cr) / (Math.hypot(q[0] - a[0], q[1] - a[1]) * Math.hypot(c[0] - q[0], c[1] - q[1]) + 1e-9) > 0.005;
+  });
+}
+function buildMeasureData() {
+  const zonesOut = [];
+  for (const m of layers.guides?.meshes ?? []) {
+    if (!m.userData.fill) continue;
+    const z = man.zones.find((x) => x.id === m.userData.zoneId);
+    zonesOut.push({ id: m.userData.zoneId, colour: z?.colour || '#888', pts: zoneOutline(m.geometry) });
+  }
+  const bounds = { ...MEASURE_BOUNDS };
+  const points = [];
+  for (const z of zonesOut) {
+    const sorted = z.pts.map((q) => ({ x: q[0], z: q[1] })).sort((a, b) => (Math.round(a.z * 2) - Math.round(b.z * 2)) || a.x - b.x);
+    sorted.forEach((q, i) => points.push({ key: `${z.id}:${q.x.toFixed(2)},${q.z.toFixed(2)}`, id: `${z.id}.${i + 1}`, x: q.x, z: q.z, zone: z.id, colour: z.colour }));
+  }
+  return { zones: zonesOut, bounds, points };
+}
+// distances from a floor point to the nearest wall (left / right) and grandstand (top / bottom)
+function measureFrom(x, z) {
+  const B = measure.data.bounds;
+  const left = x - B.x0 <= B.x1 - x, top = z - B.z0 <= B.z1 - z;
+  return { ex: left ? B.x0 : B.x1, dx: left ? x - B.x0 : B.x1 - x, sideX: left ? 'left wall' : 'right wall',
+    ez: top ? B.z0 : B.z1, dz: top ? z - B.z0 : B.z1 - z, sideZ: top ? 'top grandstand' : 'bottom grandstand' };
+}
+function enterMeasure() {
+  if (measure.on || state.loading) return;
+  if (state.walking) exitWalk(false);
+  stopTour(); closePopovers();
+  measure.data ||= buildMeasureData();
+  measure.on = true;
+  measure.prevIso = topv.iso; topv.iso = true;    // a true plan while measuring
+  stage.classList.add('measuring');
+  measureLayer.hidden = false;
+  $('#measurehud').hidden = false;
+  $('#btn-measure').classList.add('active');
+  measureHint();
+  syncMeasureHud();
+  if (topv.on) {
+    if (topv.fov !== TOP_FOV.iso) topv.lens = { from: topv.fov, to: TOP_FOV.iso, t: 0 };
+    buildNavpad();
+  } else enterTop();
+  setActivePreset(null);
+  history.replaceState(null, '', '#measure');
+}
+function endMeasure() {
+  if (!measure.on) return;
+  measure.on = false; measure.pins.clear(); measure.hover = null; measure.sel = null; measure.mouse = null;
+  topv.iso = measure.prevIso;
+  if (topv.on && !topv.iso) topv.lens = { from: topv.fov, to: TOP_FOV.persp, t: 0 };
+  stage.classList.remove('measuring');
+  measureLayer.hidden = true;
+  $('#measurehud').hidden = true;
+  $('#btn-measure').classList.remove('active');
+  if (topv.on) { setActivePreset('top'); buildNavpad(); history.replaceState(null, '', '#top'); }
+}
+function toggleMeasure() { if (measure.on) endMeasure(); else enterMeasure(); }
+function measureHint(text) {
+  $('#measure-read').textContent = text || 'Hover a corner for its distances · click to pin';
+}
+const _mp = V3();
+function measureToScreen(x, z) {
+  _mp.set(x, floorY, z).project(camera);
+  const r = canvas.getBoundingClientRect(), s = stage.getBoundingClientRect();
+  return [r.left - s.left + ((_mp.x + 1) / 2) * r.width, r.top - s.top + ((1 - _mp.y) / 2) * r.height];
+}
+function updateMeasureHover() {
+  if (!measure.mouse) { measure.hover = null; return; }
+  const s = stage.getBoundingClientRect(), mx = measure.mouse.x - s.left, my = measure.mouse.y - s.top;
+  let best = null, bd = MEASURE_SNAP;
+  for (const p of measure.data.points) {
+    const [sx, sy] = measureToScreen(p.x, p.z), d = Math.hypot(sx - mx, sy - my);
+    if (d < bd) { bd = d; best = p; }
+  }
+  measure.hover = best;
+  const p = best || measure.sel;
+  if (p) {
+    const m = measureFrom(p.x, p.z);
+    measureHint(`Corner ${p.id}${measure.done.has(p.key) ? ' ✓' : ''} · ${m.dx.toFixed(2)} m from the ${m.sideX} · ${m.dz.toFixed(2)} m from the ${m.sideZ}`);
+  } else {
+    const f = floorPointAt(measure.mouse.x, measure.mouse.y);
+    const B = measure.data.bounds;
+    if (f && f.x >= B.x0 && f.x <= B.x1 && f.z >= B.z0 && f.z <= B.z1) {
+      const m = measureFrom(f.x, f.z);
+      measureHint(`Pointer · ${m.dx.toFixed(2)} m from the ${m.sideX} · ${m.dz.toFixed(2)} m from the ${m.sideZ}`);
+    } else measureHint();
+  }
+}
+function drawMeasure() {
+  const W = stage.clientWidth, H = stage.clientHeight, dpr = Math.min(window.devicePixelRatio || 1, 2);
+  if (measureLayer.width !== Math.round(W * dpr) || measureLayer.height !== Math.round(H * dpr)) {
+    measureLayer.width = Math.round(W * dpr); measureLayer.height = Math.round(H * dpr);
+  }
+  const g = measureLayer.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+  if (!topv.on || !measure.data) return;           // still flying into the top view
+  updateMeasureHover();
+  drawMeasureTo(g, measureToScreen, 1, { hover: measure.hover, sel: measure.sel, pins: measure.pins, all: measure.all });
+  stage.classList.toggle('measure-hover', !!measure.hover);
+}
+// the plan drawing, used on screen and for the printable plan. P maps floor (x, z) to pixels; k scales
+// line widths and text
+function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), all = false } = {}) {
+  const d = measure.data, B = d.bounds;
+  const path = (pts) => { g.beginPath(); pts.forEach(([x, z], i) => { const [sx, sy] = P(x, z); if (i) g.lineTo(sx, sy); else g.moveTo(sx, sy); }); g.closePath(); };
+  const rect = [[B.x0, B.z0], [B.x1, B.z0], [B.x1, B.z1], [B.x0, B.z1]];
+  // the plan sheet: everything inside the walls and grandstands fades to ~10%
+  path(rect); g.fillStyle = 'rgba(238, 239, 243, 0.9)'; g.fill();
+  for (const z of d.zones) {
+    path(z.pts);
+    g.fillStyle = z.colour; g.globalAlpha = 0.18; g.fill(); g.globalAlpha = 1;
+    g.lineWidth = 2 * k; g.strokeStyle = z.colour; g.stroke();
+  }
+  // the walls and grandstand fronts: what the measurements are taken from
+  path(rect); g.lineWidth = 2.5 * k; g.strokeStyle = '#050038'; g.stroke();
+  g.font = `600 ${12 * k}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
+  const pill = (text, x, y, fg = '#050038', bg = 'rgba(255,255,255,0.95)') => {
+    const w = g.measureText(text).width + 12 * k, h = 20 * k;
+    g.fillStyle = bg; g.beginPath(); g.roundRect(x - w / 2, y - h / 2, w, h, 6 * k); g.fill();
+    g.fillStyle = fg; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, x, y + 0.5 * k);
+  };
+  {
+    const [ax, ay] = P(B.x0, B.z0), [bx] = P(B.x1, B.z0), [, cy] = P(B.x0, B.z1);
+    pill(`${(B.x1 - B.x0).toFixed(2)} m between the perforated walls`, (ax + bx) / 2, cy + 16 * k);   // below: the bar sits on top
+    g.save(); g.translate(ax - 16 * k, (ay + cy) / 2); g.rotate(-Math.PI / 2);
+    pill(`${(B.z1 - B.z0).toFixed(2)} m between the grandstand fronts`, 0, 0); g.restore();
+  }
+  // all corners: a compact label beside each, arrows pointing to the wall and grandstand measured from
+  if (all) {
+    // labels sit beside their corner, away from the zone's middle; where they would overlap another
+    // label or a corner, the next free spot nearby is used
+    const placed = d.points.map((q) => { const [x, y] = P(q.x, q.z); return { x: x - 7 * k, y: y - 7 * k, w: 14 * k, h: 14 * k }; });
+    const free = (r) => !placed.some((o) => r.x < o.x + o.w && r.x + r.w > o.x && r.y < o.y + o.h && r.y + r.h > o.y);
+    const mid = {};
+    for (const z of d.zones) mid[z.id] = P(z.pts.reduce((s, q) => s + q[0], 0) / z.pts.length, z.pts.reduce((s, q) => s + q[1], 0) / z.pts.length);
+    for (const q of d.points) {
+      const m = measureFrom(q.x, q.z), [sx, sy] = P(q.x, q.z), [ccx, ccy] = mid[q.zone], isDone = measure.done.has(q.key);
+      let ox = sx - ccx, oy = sy - ccy; const l = Math.hypot(ox, oy) || 1; ox /= l; oy /= l;   // away from the zone's middle
+      const text = `${isDone ? '✓ ' : ''}${q.id}  ${m.sideX.startsWith('left') ? '←' : '→'} ${m.dx.toFixed(2)}  ${m.sideZ.startsWith('top') ? '↑' : '↓'} ${m.dz.toFixed(2)}`;
+      const w = g.measureText(text).width + 12 * k, h = 20 * k;
+      const a0 = [ox * (w / 2 + 8 * k), oy * 16 * k];
+      const tries = [a0, [a0[0], a0[1] - 22 * k], [a0[0], a0[1] + 22 * k], [0, -20 * k], [0, 20 * k], [w / 2 + 10 * k, 0], [-(w / 2 + 10 * k), 0],
+        [a0[0], a0[1] - 44 * k], [a0[0], a0[1] + 44 * k], [0, -42 * k], [0, 42 * k]];
+      let at = a0;
+      for (const t of tries) {
+        const r = { x: sx + t[0] - w / 2 - 2 * k, y: sy + t[1] - h / 2 - 2 * k, w: w + 4 * k, h: h + 4 * k };
+        if (free(r)) { at = t; placed.push(r); break; }
+      }
+      if (Math.hypot(at[0], at[1]) > 40 * k) {      // moved well away: a thin leader back to the corner
+        g.beginPath(); g.moveTo(sx, sy); g.lineTo(sx + at[0], sy + at[1]); g.lineWidth = 1 * k; g.strokeStyle = 'rgba(5,0,56,0.45)'; g.stroke();
+      }
+      pill(text, sx + at[0], sy + at[1], isDone ? '#14713a' : '#050038', isDone ? 'rgba(226,245,233,0.96)' : 'rgba(255,255,255,0.95)');
+    }
+  }
+  // the hovered and pinned corners: full dimension lines to the wall and the grandstand
+  const shown = d.points.filter((q) => pins.has(q.key) || q === hover || q === sel);
+  for (const q of shown) {
+    const m = measureFrom(q.x, q.z), [px, py] = P(q.x, q.z), [ex] = P(m.ex, q.z), [, ey] = P(q.x, m.ez);
+    g.strokeStyle = '#E60028'; g.lineWidth = 1.6 * k; g.lineCap = 'round';
+    g.setLineDash([0.1 * k, 5 * k]);                // dotted, so it reads apart from the zone outlines
+    g.lineWidth = 2.6 * k;
+    g.beginPath(); g.moveTo(px, py); g.lineTo(ex, py); g.moveTo(px, py); g.lineTo(px, ey); g.stroke();
+    g.setLineDash([]); g.lineWidth = 1.6 * k; g.lineCap = 'butt';
+    g.beginPath(); g.moveTo(ex, py - 6 * k); g.lineTo(ex, py + 6 * k); g.moveTo(px - 6 * k, ey); g.lineTo(px + 6 * k, ey); g.stroke();
+    pill(`${m.dx.toFixed(2)} m`, (px + ex) / 2, py - 13 * k, '#E60028');
+    pill(`${m.dz.toFixed(2)} m`, px + (Math.abs(ey - py) > 60 * k ? 0 : 34 * k), (py + ey) / 2, '#E60028');
+  }
+  for (const q of d.points) {
+    const [sx, sy] = P(q.x, q.z), on = shown.includes(q), isDone = measure.done.has(q.key);
+    const r = (isDone ? 6.5 : on ? 6 : 4) * k;
+    g.beginPath(); g.arc(sx, sy, r, 0, Math.PI * 2);
+    g.fillStyle = isDone ? '#1f9d55' : on ? '#E60028' : '#fff'; g.fill();
+    g.lineWidth = (on || isDone ? 2 : 1.5) * k; g.strokeStyle = on && isDone ? '#E60028' : isDone || on ? '#fff' : '#050038'; g.stroke();
+    if (isDone) {                                  // a tick
+      g.beginPath(); g.moveTo(sx - 2.8 * k, sy + 0.2 * k); g.lineTo(sx - 0.8 * k, sy + 2.3 * k); g.lineTo(sx + 3 * k, sy - 2.3 * k);
+      g.lineWidth = 1.6 * k; g.strokeStyle = '#fff'; g.stroke();
+    }
+  }
+}
+// a printable plan: the whole hall, landscape at A-paper proportions, every corner measured
+async function saveMeasurePlan() {
+  if (!measure.on || !topv.on || state.exporting) return;
+  const btn = $('#measure-save'); btn.disabled = true; measureHint('Making the plan…');
+  await nextTask();
+  const gl = renderer.getContext();
+  const maxSide = Math.min(gl.getParameter(gl.MAX_RENDERBUFFER_SIZE), gl.getParameter(gl.MAX_VIEWPORT_DIMS)[0], 4096);
+  const Wo = maxSide, Ho = Math.round(maxSide / Math.SQRT2);
+  const saved = { center: topv.center.clone(), size: topv.size, fov: topv.fov, ratio: renderer.getPixelRatio() };
+  const B = measure.data.bounds, title = 0.07;     // a band at the top for the title
+  state.exporting = true;
+  const out = document.createElement('canvas'); out.width = Wo; out.height = Ho;
+  const g = out.getContext('2d');
+  let ok = false;
+  try {
+    // frame the walls and grandstands with room for the labels, below the title band
+    camera.aspect = Wo / Ho;
+    topv.fov = TOP_FOV.iso;
+    topv.size = Math.max((B.z1 - B.z0) / 2 / (1 - title * 2), (B.x1 - B.x0) / 2 / camera.aspect) * 1.2;
+    topv.center.set((B.x0 + B.x1) / 2, floorY, (B.z0 + B.z1) / 2 - topv.size * title);
+    applyTop();
+    renderer.setPixelRatio(1);
+    renderer.setSize(Wo, Ho, false);
+    renderer.setRenderTarget(null);
+    renderer.render(scene, camera);
+    g.drawImage(canvas, 0, 0);                      // same task as the draw: still there
+    const P = (x, z) => { _mp.set(x, floorY, z).project(camera); return [((_mp.x + 1) / 2) * Wo, ((1 - _mp.y) / 2) * Ho]; };
+    const k = Wo / 1500;
+    drawMeasureTo(g, P, k, { all: true });
+    // title
+    g.fillStyle = 'rgba(255,255,255,0.96)'; g.fillRect(0, 0, Wo, Ho * title);
+    g.fillStyle = '#050038'; g.textAlign = 'left'; g.textBaseline = 'middle';
+    g.font = `700 ${22 * k}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
+    g.fillText('B10 Showcase · zone corner measurements (metres)', 24 * k, Ho * title * 0.36);
+    g.font = `400 ${13 * k}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
+    const nDone = measure.data.points.filter((q) => measure.done.has(q.key)).length;
+    g.fillText(`← / → from the left / right perforated wall · ↑ / ↓ from the top / bottom grandstand front (at ${Math.round(MEASURE_HEIGHT * 100)} cm above the floor) · ✓ done: ${nDone} of ${measure.data.points.length} · ${new Date().toLocaleDateString()}`, 24 * k, Ho * title * 0.74);
+    ok = true;
+  } catch (e) {
+    console.error('measure plan', e);
+  } finally {
+    topv.center.copy(saved.center); topv.size = saved.size; topv.fov = saved.fov;
+    renderer.setPixelRatio(saved.ratio);
+    resize();
+    applyTop();
+    state.exporting = false;
+  }
+  if (ok) {
+    const blob = await new Promise((r) => out.toBlob(r, 'image/png'));
+    if (blob) downloadBlob(blob, `B10-Showcase_measurements_${fileStamp()}.png`);
+  }
+  out.width = out.height = 0;
+  btn.disabled = false;
+  measureHint(ok ? 'Plan saved' : 'Couldn’t make the plan');
+}
+stage.addEventListener('pointermove', (e) => { if (measure.on) measure.mouse = { x: e.clientX, y: e.clientY }; });
+stage.addEventListener('pointerleave', () => { if (measure.on) { measure.mouse = null; measureHint(); } });
 
 // ------------------------------------------------------------------ walk mode
 const walk = { yaw: 0, pitch: 0, height: EYE, keys: new Set(), target: null, drag: null, pad: { move: 0, turn: 0 } };
@@ -1190,7 +1496,7 @@ canvas.addEventListener('pointerdown', (e) => {
   if (!state.walking && e.button === 0) downAt = { x: e.clientX, y: e.clientY, t: performance.now() };
 });
 canvas.addEventListener('pointermove', (e) => {
-  if (state.walking || state.tour || state.fly || e.buttons) { setHoverZone(null); setHoverBlock(null); return; }
+  if (state.walking || state.tour || state.fly || e.buttons || measure.on) { setHoverZone(null); setHoverBlock(null); return; }
   if (e.pointerType !== 'mouse' || hoverPending) return;
   hoverPending = true;
   requestAnimationFrame(() => {
@@ -1205,6 +1511,7 @@ canvas.addEventListener('pointerup', (e) => {
   if (state.walking || !downAt) return;
   const d = downAt; downAt = null;
   if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 5 || performance.now() - d.t > 450) return;   // was a drag
+  if (measure.on) { const p = measure.hover; if (p) { if (measure.pins.has(p.key) && measure.sel === p) { measure.pins.delete(p.key); measure.sel = null; } else { measure.pins.add(p.key); measure.sel = p; } } else measure.sel = null; syncMeasureHud(); return; }
   // a stand under the cursor wins; open zone floor takes you to that school
   const blk = blockAt(e.clientX, e.clientY);
   if (blk) { if (topv.on) topFrame(blk.block.box, 1.8); else focusBlock(blk); return; }
@@ -1439,7 +1746,7 @@ window.addEventListener('keydown', (e) => {
   if (map[e.code]) { if (topv.on) topFrame(zones[Number(map[e.code].slice(4))].box, 1.08); else go(map[e.code]); }
   // outside walk mode: Esc goes back to the overview, Space to the top-down view
   if (!state.walking && e.code === 'Escape') go('overview');
-  if (!state.walking && e.code === 'Space' && !e.target.closest('button, a, select')) { e.preventDefault(); if (topv.on) setTopIso(!topv.iso); else go('top'); }
+  if (!state.walking && e.code === 'Space' && !e.target.closest('button, a, select')) { e.preventDefault(); if (measure.on) return; if (topv.on) setTopIso(!topv.iso); else go('top'); }
   if (e.key === '+' || e.key === '=') { if (state.walking) zoomWalkFov(-5); else if (topv.on) topZoom(1 / 1.25); else flyForward(1); }
   if (e.key === '-' || e.key === '_') { if (state.walking) zoomWalkFov(5); else if (topv.on) topZoom(1.25); else flyForward(-1); }
   if (e.code === 'KeyF' && !e.ctrlKey && !e.metaKey) toggleWalk();
@@ -1447,6 +1754,8 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyL') setShadows(!state.shadows);
   if (e.code === 'KeyC' && !e.ctrlKey && !e.metaKey && !e.altKey) openPhoto();
   if (e.code === 'KeyT' && !state.walking) startTour('hall');
+  if (e.code === 'KeyM' && !e.ctrlKey && !e.metaKey && !e.altKey) toggleMeasure();
+  if (e.code === 'KeyD' && measure.on && !state.walking) toggleDone(measure.hover || measure.sel);
 });
 window.addEventListener('keyup', (e) => walk.keys.delete(e.code));
 window.addEventListener('blur', () => walk.keys.clear());
@@ -1610,6 +1919,16 @@ function buildUI() {
   }
 
   $('#btn-walk').addEventListener('click', toggleWalk);
+  $('#btn-measure').addEventListener('click', toggleMeasure);
+  $('#measure-exit').addEventListener('click', endMeasure);
+  $('#measure-clear').addEventListener('click', () => { measure.pins.clear(); measure.sel = null; syncMeasureHud(); });
+  $('#measure-done').addEventListener('click', () => toggleDone(measure.sel));
+  $('#measure-reset').addEventListener('click', () => {
+    const n = measure.done.size;
+    if (n && confirm(`Clear all ${n} completed mark${n === 1 ? '' : 's'} on this device?`)) { measure.done.clear(); saveDone(); syncMeasureHud(); }
+  });
+  $('#measure-all').addEventListener('click', () => { measure.all = !measure.all; $('#measure-all').setAttribute('aria-pressed', String(measure.all)); });
+  $('#measure-save').addEventListener('click', saveMeasurePlan);
 
   // tours flyout
   const menu = $('#tour-menu');
@@ -1721,6 +2040,7 @@ function buildNavpad() {
     btn('minus', 'Zoom out (−)', (s) => { if (s !== null) topZoom(s ? 1.15 : 1.012); });
     btn('fit', 'Fit the whole hall', (s) => { if (s === true) topFrame(null); });
     btn('plus', 'Zoom in (+)', (s) => { if (s !== null) topZoom(s ? 1 / 1.15 : 1 / 1.012); });
+    if (!measure.on) {
     const sep = document.createElement('span'); sep.className = 'sep'; pad.appendChild(sep);
     const seg = document.createElement('div');
     seg.className = 'segmented proj'; seg.setAttribute('role', 'radiogroup'); seg.setAttribute('aria-label', 'Projection');
@@ -1733,6 +2053,7 @@ function buildNavpad() {
       seg.appendChild(b);
     }
     pad.appendChild(seg);
+    }
   } else if (state.walking) {
     btn('rotl', 'Turn left', (s) => { walk.pad.turn = s === null ? 0 : -1; });
     btn('up', 'Walk forward', (s) => { walk.pad.move = s === null ? 0 : 1; });
@@ -2540,8 +2861,9 @@ renderer.setAnimationLoop(() => {
   renderer.render(scene, camera);
   renderOutline();
   labelRenderer.render(scene, camera);
+  if (measure.on) drawMeasure();
 });
 controls.addEventListener('start', () => { stopTour(); state.fly = null; setActivePreset(null); closePopovers(); });
 
-if (new URLSearchParams(location.search).has('debug')) window.b10 = { camera, controls, layers, zones, labelObjs, state, cut, walk, enterWalk, exitWalk, poses, zonePose, fitPoseToLimits, clampOrbit, blockAt, focusBlock, go, setHoverBlock, scene, renderer, renderOutline, clampWalk, video, VIDEO, buildPath, startVideo, addKeyframe, finishPath, renderVideo, editPath, endVideo, updateWalk, watermarkCanvas, watermarkRect, WATERMARK, topv, enterTop, startTop, leaveTop, updateTop, topZoom, topPan, setTopIso, topFrame, topFit, toggleWalk };
+if (new URLSearchParams(location.search).has('debug')) window.b10 = { camera, controls, layers, zones, labelObjs, state, cut, walk, enterWalk, exitWalk, poses, zonePose, fitPoseToLimits, clampOrbit, blockAt, focusBlock, go, setHoverBlock, scene, renderer, renderOutline, clampWalk, video, VIDEO, buildPath, startVideo, addKeyframe, finishPath, renderVideo, editPath, endVideo, updateWalk, watermarkCanvas, watermarkRect, WATERMARK, topv, enterTop, startTop, measure, enterMeasure, endMeasure, drawMeasure, buildMeasureData, saveMeasurePlan, leaveTop, updateTop, topZoom, topPan, setTopIso, topFrame, topFit, toggleWalk };
 boot();
