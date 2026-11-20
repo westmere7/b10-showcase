@@ -1160,7 +1160,7 @@ function drawMeasure() {
 }
 // the plan drawing, used on screen and for the printable plan. P maps floor (x, z) to pixels; k scales
 // line widths and text
-function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), all = false } = {}) {
+function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), all = false, totals = false } = {}) {
   // sized for an iPad held at arm's length: thick lines, big numbers (k scales everything)
   const d = measure.data, B = d.bounds, FONT = 15 * k, PH = 26 * k, PAD = 16 * k;
   const path = (pts) => { g.beginPath(); pts.forEach(([x, z], i) => { const [sx, sy] = P(x, z); if (i) g.lineTo(sx, sy); else g.moveTo(sx, sy); }); g.closePath(); };
@@ -1195,7 +1195,7 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
     g.fillStyle = fg; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, x, y + 0.5 * k);
     return w;
   };
-  {
+  if (totals) {                                     // overall sizes: on the printed plan only
     const [ax, ay] = P(B.x0, B.z0), [bx] = P(B.x1, B.z0), [, cy] = P(B.x0, B.z1);
     pill(`${(B.x1 - B.x0).toFixed(2)} m between the perforated walls`, (ax + bx) / 2, cy + 22 * k);   // below: the bar sits on top
     g.save(); g.translate(ax - 22 * k, (ay + cy) / 2); g.rotate(-Math.PI / 2);
@@ -1290,7 +1290,7 @@ async function saveMeasurePlan() {
     g.drawImage(canvas, 0, 0);                      // same task as the draw: still there
     const P = (x, z) => { _mp.set(x, floorY, z).project(camera); return [((_mp.x + 1) / 2) * Wo, ((1 - _mp.y) / 2) * Ho]; };
     const k = Wo / 1900;
-    drawMeasureTo(g, P, k, { all: true });
+    drawMeasureTo(g, P, k, { all: true, totals: true });
     // title
     g.fillStyle = 'rgba(255,255,255,0.96)'; g.fillRect(0, 0, Wo, Ho * title);
     g.fillStyle = '#050038'; g.textAlign = 'left'; g.textBaseline = 'middle';
