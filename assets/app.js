@@ -1092,10 +1092,15 @@ function enterMeasure() {
   $('#btn-measure').classList.add('active');
   measureHint();
   syncMeasureHud();
-  if (topv.on) {
-    if (topv.fov !== TOP_FOV.iso) topv.lens = { from: topv.fov, to: TOP_FOV.iso, t: 0 };
-    buildNavpad();
-  } else enterTop();
+  // straight into the plan: no flight, no lens change
+  state.fly = null; stopOrbitMomentum();
+  const f = topFit();
+  if (!topv.on) startTop(f);
+  topv.center.copy(f.center); topv.size = f.size;
+  topv.goal.center.copy(f.center); topv.goal.size = f.size;
+  topv.lens = null; topv.fov = TOP_FOV.iso;
+  applyTop();
+  buildNavpad();
   setActivePreset(null);
   history.replaceState(null, '', '#measure');
 }
@@ -1195,6 +1200,29 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
     g.fillStyle = fg; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, x, y + 0.5 * k);
     return w;
   };
+  // corner labels: text, gaps (numbers, px) and red triangles ('tl' 'tr' 'tu' 'td') pointing at the
+  // wall / grandstand each distance is measured from
+  const TRI = FONT * 0.62;
+  const labelWidth = (parts) => parts.reduce((s2, p2) => s2 + (typeof p2 === 'number' ? p2 : p2[0] === 't' && p2.length === 2 ? TRI + 4 * k : g.measureText(p2).width), 0);
+  const drawLabel = (parts, x, y, w) => {
+    g.fillStyle = 'rgba(255,255,255,0.96)'; g.beginPath(); g.roundRect(x - w / 2, y - PH / 2, w, PH, 7 * k); g.fill();
+    let cx = x - w / 2 + PAD / 2;
+    g.textAlign = 'left'; g.textBaseline = 'middle';
+    for (const p2 of parts) {
+      if (typeof p2 === 'number') { cx += p2; continue; }
+      if (p2[0] === 't' && p2.length === 2) {
+        const c = cx + TRI / 2, h2 = TRI / 2, dir = p2[1];
+        g.beginPath();
+        if (dir === 'l') { g.moveTo(c - h2, y); g.lineTo(c + h2, y - h2); g.lineTo(c + h2, y + h2); }
+        else if (dir === 'r') { g.moveTo(c + h2, y); g.lineTo(c - h2, y - h2); g.lineTo(c - h2, y + h2); }
+        else if (dir === 'u') { g.moveTo(c, y - h2); g.lineTo(c - h2, y + h2); g.lineTo(c + h2, y + h2); }
+        else { g.moveTo(c, y + h2); g.lineTo(c - h2, y - h2); g.lineTo(c + h2, y - h2); }
+        g.closePath(); g.fillStyle = '#E60028'; g.fill();
+        cx += TRI + 4 * k; continue;
+      }
+      g.fillStyle = '#050038'; g.fillText(p2, cx, y + 0.5 * k); cx += g.measureText(p2).width;
+    }
+  };
   // all corners: a label beside each (ID, arrows to the wall and grandstand measured from, distances);
   // where it would cover another label or a corner, the next free spot nearby is used
   if (all) {
@@ -1206,8 +1234,8 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
       if (measure.done.has(q.key)) continue;         // done: no label, just the green ring
       const m = measureFrom(q.x, q.z), [sx, sy] = P(q.x, q.z), [ccx, ccy] = mid[q.zone], isDone = false;
       let ox = sx - ccx, oy = sy - ccy; const l = Math.hypot(ox, oy) || 1; ox /= l; oy /= l;   // away from the zone's middle
-      const text = `${isDone ? '✓ ' : ''}${q.id}  ${m.sideX.startsWith('left') ? '←' : '→'} ${m.dx.toFixed(2)}  ${m.sideZ.startsWith('top') ? '↑' : '↓'} ${m.dz.toFixed(2)}`;
-      const w = g.measureText(text).width + PAD, h = PH, gap = PH + 4 * k;
+      const parts = [q.id, 12 * k, m.sideX.startsWith('left') ? 'tl' : 'tr', m.dx.toFixed(2), 10 * k, m.sideZ.startsWith('top') ? 'tu' : 'td', m.dz.toFixed(2)];
+      const w = labelWidth(parts) + PAD, h = PH, gap = PH + 4 * k;
       const a0 = [ox * (w / 2 + 12 * k), oy * 20 * k];
       const tries = [a0, [a0[0], a0[1] - gap], [a0[0], a0[1] + gap], [0, -gap], [0, gap], [w / 2 + 14 * k, 0], [-(w / 2 + 14 * k), 0],
         [a0[0], a0[1] - 2 * gap], [a0[0], a0[1] + 2 * gap], [0, -2 * gap], [0, 2 * gap]];
@@ -1219,7 +1247,7 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
       if (Math.hypot(at[0], at[1]) > 50 * k) {      // moved well away: a thin leader back to the corner
         g.beginPath(); g.moveTo(sx, sy); g.lineTo(sx + at[0], sy + at[1]); g.lineWidth = 1.5 * k; g.strokeStyle = 'rgba(5,0,56,0.5)'; g.stroke();
       }
-      pill(text, sx + at[0], sy + at[1], isDone ? '#14713a' : '#050038', isDone ? 'rgba(226,245,233,0.97)' : 'rgba(255,255,255,0.96)', isDone ? '#1f9d55' : null);
+      drawLabel(parts, sx + at[0], sy + at[1], w);
     }
   }
   // the hovered / selected / pinned corners: dotted dimension lines to the wall and the grandstand
@@ -1297,7 +1325,7 @@ async function saveMeasurePlan() {
     g.fillText('B10 Showcase · zone corner measurements (metres)', 24 * k, Ho * title * 0.36);
     g.font = `400 ${17 * k}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
     const nDone = measure.data.points.filter((q) => measure.done.has(q.key)).length;
-    g.fillText(`← / → from the left / right perforated wall · ↑ / ↓ from the top / bottom grandstand front (at ${Math.round(MEASURE_HEIGHT * 100)} cm above the floor) · ✓ done: ${nDone} of ${measure.data.points.length} · ${new Date().toLocaleDateString()}`, 24 * k, Ho * title * 0.74);
+    g.fillText(`◀ / ▶ from the left / right perforated wall · ▲ / ▼ from the top / bottom grandstand front (at ${Math.round(MEASURE_HEIGHT * 100)} cm above the floor) · ✓ done: ${nDone} of ${measure.data.points.length} · ${new Date().toLocaleDateString()}`, 24 * k, Ho * title * 0.74);
     ok = true;
   } catch (e) {
     console.error('measure plan', e);
