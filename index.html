@@ -7,7 +7,7 @@
   <meta name="description" content="Interactive 3D floor plan of the B10 sports hall showcase for RMIT Vietnam Experience Day 2026, covering SSET, SCD and TBS.">
   <meta name="theme-color" content="#000054">
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-  <link rel="stylesheet" href="assets/style.css?v=20261120w">
+  <link rel="stylesheet" href="assets/style.css?v=20261120x">
   <script type="importmap">
     {
       "imports": {
@@ -109,6 +109,7 @@
   <div id="measurehud" class="pill hud dark measurehud" hidden>
     <div class="hud-text"><strong>Measure <span class="measure-progress" id="measure-progress"></span></strong><span id="measure-read"></span></div>
     <button class="hud-btn primary" id="measure-done" aria-pressed="false" title="Mark the selected corner as done on the floor (D)" disabled>Mark done</button>
+    <button class="hud-btn" id="measure-mono" aria-pressed="false" title="Black on white, for the most contrast (also used for Export A4)">Mono</button>
     <button class="hud-btn" id="measure-all" aria-pressed="false" title="Label every corner with its distances">Show all</button>
     <button class="hud-btn" id="measure-save" title="Save the whole plan with every measurement as an A4 PDF, ready to print">Export A4</button>
     <button class="hud-btn" id="measure-clear">Clear pins</button>
@@ -254,6 +255,6 @@
   </dialog>
 
   <noscript><p class="noscript">This 3D viewer needs JavaScript and a browser that supports WebGL.</p></noscript>
-  <script type="module" src="assets/app.js?v=20261120w"></script>
+  <script type="module" src="assets/app.js?v=20261120x"></script>
 </body>
 </html>
