@@ -1591,7 +1591,16 @@ canvas.addEventListener('pointerup', (e) => {
   const finger = e.pointerType !== 'mouse';
   if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > (finger ? 12 : 5) || performance.now() - d.t > (finger ? 600 : 450)) return;   // was a drag
   if (topv.multi) return;                         // the end of a two-finger pinch, not a tap
-  if (measure.on) { const p = measurePick(e.clientX, e.clientY, finger ? MEASURE_SNAP_TOUCH : MEASURE_SNAP); if (p) { if (measure.pins.has(p.key) && measure.sel === p) { measure.pins.delete(p.key); measure.sel = null; } else { measure.pins.add(p.key); measure.sel = p; } } else measure.sel = null; syncMeasureHud(); return; }
+  if (measure.on) {
+    // mouse: clicks pin corners (several can stay shown); touch: one corner at a time, a tap on
+    // another corner moves the selection there, a tap on the floor clears it
+    const p = measurePick(e.clientX, e.clientY, finger ? MEASURE_SNAP_TOUCH : MEASURE_SNAP);
+    if (p && measure.pins.has(p.key) && measure.sel === p) { measure.pins.delete(p.key); measure.sel = null; }
+    else if (p) { if (finger) measure.pins.clear(); measure.pins.add(p.key); measure.sel = p; }
+    else { measure.sel = null; if (finger) measure.pins.clear(); }
+    syncMeasureHud();
+    return;
+  }
   // a stand under the cursor wins; open zone floor takes you to that school
   const blk = blockAt(e.clientX, e.clientY);
   if (blk) { if (topv.on) topFrame(blk.block.box, 1.8); else focusBlock(blk); return; }
