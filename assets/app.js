@@ -1362,9 +1362,15 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
     }
   }
   g.font = MAIN_FONT;
-  // every corner (big enough to see and tap)
+  // every corner (big enough to see and tap); the picked corners' in-line neighbours get a soft navy halo
+  const nbrOn = new Set(nbrs ? shown.flatMap((q) => inlineNbrs(q).map((x) => x.n)).filter((n) => !shown.includes(n)) : []);
   for (const q of d.points) {
     const [sx, sy] = P(q.x, q.z), isDone = measure.done.has(q.key), on = shown.includes(q), picked = q === sel || q === hover;
+    if (nbrOn.has(q)) {
+      g.beginPath(); g.arc(sx, sy, 11 * k, 0, Math.PI * 2);
+      g.fillStyle = mono ? 'rgba(0,0,0,0.1)' : 'rgba(5,0,56,0.12)'; g.fill();
+      g.lineWidth = 1.5 * k; g.strokeStyle = C.nbr; g.stroke();
+    }
     if (isDone) {                                  // done: white with a green ring and a green tick
       const r = 7 * k;
       g.beginPath(); g.arc(sx, sy, r, 0, Math.PI * 2); g.fillStyle = '#fff'; g.fill();
