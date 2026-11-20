@@ -7,7 +7,7 @@
   <meta name="description" content="Interactive 3D floor plan of the B10 sports hall showcase for RMIT Vietnam Experience Day 2026, covering SSET, SCD and TBS.">
   <meta name="theme-color" content="#000054">
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
-  <link rel="stylesheet" href="assets/style.css?v=20261120y">
+  <link rel="stylesheet" href="assets/style.css?v=20261120z">
   <script type="importmap">
     {
       "imports": {
@@ -40,6 +40,8 @@
       <symbol id="i-rotr" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v4h-4" /></symbol>
       <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></symbol>
       <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" /></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5" /></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14" /></symbol>
       <symbol id="i-up" viewBox="0 0 24 24"><path d="m6 14 6-6 6 6" /></symbol>
       <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 10 6 6 6-6" /></symbol>
       <symbol id="i-chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6" /></symbol>
@@ -112,15 +114,16 @@
       <button role="radio" data-mview="colour" title="School colours">Colour</button><button role="radio" data-mview="mono" title="Black on white for the most contrast; measurements stay red">Mono</button>
     </div>
     <span class="rail-sep"></span>
-    <button class="hud-btn" id="measure-all" aria-pressed="false" title="Label every corner with its two distances">Distances</button>
-    <button class="hud-btn" id="measure-areas" aria-pressed="false" title="Each zone's area in square metres">Areas</button>
+    <button class="rail-toggle" role="switch" id="measure-all" aria-checked="false" title="Label every corner with its two distances"><span class="sw" aria-hidden="true"></span>Show all distances</button>
+    <button class="rail-toggle" role="switch" id="measure-nbrs" aria-checked="true" title="For the picked corner, also show the length of each straight (horizontal or vertical) edge to the next corner"><span class="sw" aria-hidden="true"></span>Neighbours</button>
+    <button class="rail-toggle" role="switch" id="measure-areas" aria-checked="false" title="Each zone's area in square metres"><span class="sw" aria-hidden="true"></span>Areas</button>
   </div>
   <div id="measurehud" class="pill hud dark measurehud" hidden>
     <div class="hud-text"><strong>Measure <span class="measure-progress" id="measure-progress"></span></strong><span id="measure-read"></span></div>
-    <button class="hud-btn primary" id="measure-done" aria-pressed="false" title="Mark the selected corner as done on the floor (D)" disabled>Mark done</button>
-    <button class="hud-btn" id="measure-save" title="Save the whole plan with every measurement as an A4 PDF, ready to print">Export A4</button>
-    <button class="hud-btn" id="measure-clear">Clear pins</button>
-    <button class="hud-btn" id="measure-reset" title="Clear every completed mark on this device" disabled>Reset done</button>
+    <button class="hud-btn primary" id="measure-done" aria-pressed="false" title="Mark the selected corner as done on the floor (D)" disabled><svg><use href="#i-check"/></svg><span>Mark done</span></button>
+    <button class="hud-btn" id="measure-save" title="Save the whole plan with every measurement as an A4 PDF, ready to print"><svg><use href="#i-download"/></svg>Export A4</button>
+    <button class="hud-btn" id="measure-clear" title="Unpin every corner"><svg><use href="#i-close"/></svg>Clear pins</button>
+    <button class="hud-btn" id="measure-reset" title="Clear every completed mark on this device" disabled><svg><use href="#i-rotl"/></svg>Reset done</button>
     <button class="hud-btn icon" id="measure-exit" aria-label="Leave measure mode (M)" title="Leave measure mode (M)"><svg><use href="#i-close"/></svg></button>
   </div>
   <div id="videohud" class="pill hud dark videohud" hidden>
@@ -262,6 +265,6 @@
   </dialog>
 
   <noscript><p class="noscript">This 3D viewer needs JavaScript and a browser that supports WebGL.</p></noscript>
-  <script type="module" src="assets/app.js?v=20261120y"></script>
+  <script type="module" src="assets/app.js?v=20261120z"></script>
 </body>
 </html>

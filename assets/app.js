@@ -998,6 +998,7 @@ const measure = { on: false, data: null, hover: null, sel: null, pins: new Set()
   all: (() => { try { return localStorage.getItem('b10-measure-all') === '1'; } catch { return false; } })(),
   mono: (() => { try { return localStorage.getItem('b10-measure-mono') === '1'; } catch { return false; } })(),
   areas: (() => { try { return localStorage.getItem('b10-measure-areas') === '1'; } catch { return false; } })(),
+  nbrs: (() => { try { return localStorage.getItem('b10-measure-nbrs') !== '0'; } catch { return true; } })(),   // on by default
   done: (() => { try { return new Set(JSON.parse(localStorage.getItem('b10-measure-done') || '[]')); } catch { return new Set(); } })() };
 function saveDone() { try { localStorage.setItem('b10-measure-done', JSON.stringify([...measure.done])); } catch { /* storage blocked */ } }
 function toggleDone(p) {
@@ -1011,7 +1012,7 @@ function syncMeasureHud() {
   $('#measure-progress').textContent = `${n} / ${pts.length} done`;
   const b = $('#measure-done'), p = measure.sel;
   b.disabled = !p;
-  b.textContent = !p ? 'Mark done' : measure.done.has(p.key) ? `${p.id} done ✓ (undo)` : `Mark ${p.id} done`;
+  b.querySelector('span').textContent = !p ? 'Mark done' : measure.done.has(p.key) ? `${p.id} done ✓ (undo)` : `Mark ${p.id} done`;
   b.setAttribute('aria-pressed', String(!!p && measure.done.has(p.key)));
   $('#measure-reset').disabled = n === 0;           // always there (greyed out), so the bar never jumps
 }
@@ -1065,10 +1066,27 @@ function buildMeasureData() {
   const bounds = { ...MEASURE_BOUNDS };
   const points = [];
   for (const z of zonesOut) {
-    const sorted = z.pts.map((q) => ({ x: q[0], z: q[1] })).sort((a, b) => (Math.round(a.z * 2) - Math.round(b.z * 2)) || a.x - b.x);
-    sorted.forEach((q, i) => points.push({ key: `${z.id}:${q.x.toFixed(2)},${q.z.toFixed(2)}`, id: `${z.id}.${i + 1}`, x: q.x, z: q.z, zone: z.id, colour: z.colour }));
+    // the corners in outline order (so each knows the two it is joined to), numbered top to bottom, left to right
+    const ring = z.pts.map((q) => ({ key: `${z.id}:${q[0].toFixed(2)},${q[1].toFixed(2)}`, x: q[0], z: q[1], zone: z.id, colour: z.colour, outline: z.pts }));
+    ring.forEach((q, i) => { q.nbrs = [ring[(i - 1 + ring.length) % ring.length], ring[(i + 1) % ring.length]]; });
+    const sorted = [...ring].sort((a, b) => (Math.round(a.z * 2) - Math.round(b.z * 2)) || a.x - b.x);
+    sorted.forEach((q, i) => { q.id = `${z.id}.${i + 1}`; points.push(q); });
   }
   return { zones: zonesOut, bounds, points };
+}
+// a corner's neighbours along its zone's outline that are in line with it (the joining edge is exactly
+// horizontal or vertical): staff often tape from one corner to the next instead of back to the walls
+function inlineNbrs(p) {
+  return (p.nbrs || []).filter((n) => Math.abs(n.x - p.x) < 0.005 || Math.abs(n.z - p.z) < 0.005)
+    .map((n) => ({ n, len: Math.hypot(n.x - p.x, n.z - p.z) }));
+}
+function insidePoly(pts, x, z) {                  // even-odd point-in-polygon test
+  let c = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [xi, zi] = pts[i], [xj, zj] = pts[j];
+    if ((zi > z) !== (zj > z) && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) c = !c;
+  }
+  return c;
 }
 // distances from a floor point to the nearest wall (left / right) and grandstand (top / bottom)
 function mixHex(a, b, t) {                        // blend two #rrggbb colours
@@ -1143,7 +1161,8 @@ function updateMeasureHover() {
   const p = best || measure.sel;
   if (p) {
     const m = measureFrom(p.x, p.z);
-    measureHint(`Corner ${p.id}${measure.done.has(p.key) ? ' ✓' : ''} · ${m.dx.toFixed(2)} m from the ${m.sideX} · ${m.dz.toFixed(2)} m from the ${m.sideZ}`);
+    const nb = measure.nbrs ? inlineNbrs(p).map(({ n, len }) => ` · ${len.toFixed(2)} m to ${n.id}`).join('') : '';
+    measureHint(`Corner ${p.id}${measure.done.has(p.key) ? ' ✓' : ''} · ${m.dx.toFixed(2)} m from the ${m.sideX} · ${m.dz.toFixed(2)} m from the ${m.sideZ}${nb}`);
   } else if (measure.mouse) {
     const f = floorPointAt(measure.mouse.x, measure.mouse.y);
     const B = measure.data.bounds;
@@ -1163,21 +1182,21 @@ function drawMeasure() {
   g.clearRect(0, 0, W, H);
   if (!topv.on || !measure.data) return;           // still flying into the top view
   updateMeasureHover();
-  drawMeasureTo(g, measureToScreen, 1, { hover: measure.hover, sel: measure.sel, pins: measure.pins, all: measure.all, mono: measure.mono, areas: measure.areas });
+  drawMeasureTo(g, measureToScreen, 1, { hover: measure.hover, sel: measure.sel, pins: measure.pins, all: measure.all, mono: measure.mono, areas: measure.areas, nbrs: measure.nbrs });
   stage.classList.toggle('measure-hover', !!measure.hover);
 }
 // the plan drawing, used on screen and for the printable plan. P maps floor (x, z) to pixels; k scales
 // line widths and text
-function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), all = false, mono = false, areas = false } = {}) {
+function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), all = false, mono = false, areas = false, nbrs = false } = {}) {
   // sized for an iPad held at arm's length: thick lines, big numbers (k scales everything)
   const d = measure.data, B = d.bounds, FONT = 15 * k, PH = 26 * k, PAD = 16 * k;
   // colours: the school colours, or mono (black on an almost white sheet) for the most contrast
   const C = mono
     ? { sheet: 'rgba(255,255,255,0.96)', zone: () => '#000', fill: 0, zoneW: 3.5, bound: '#000', arrow: '#000', name: () => '#000',
-      accent: '#E60028', ink: '#000', tri: '#E60028', border: '#000', leader: 'rgba(0,0,0,0.6)', done: '#000' }
+      accent: '#E60028', ink: '#000', tri: '#E60028', border: '#000', leader: 'rgba(0,0,0,0.6)', done: '#000', nbr: 'rgba(0,0,0,0.62)' }
     : { sheet: 'rgba(238, 239, 243, 0.9)', zone: (z) => z.colour, fill: 0.18, zoneW: 3, bound: '#050038', arrow: '#E60028',
       name: (z) => mixHex(z.colour, '#050038', 0.5), accent: '#E60028', ink: '#050038', tri: '#E60028', border: null,
-      leader: 'rgba(5,0,56,0.5)', done: '#1f9d55' };
+      leader: 'rgba(5,0,56,0.5)', done: '#1f9d55', nbr: 'rgba(5,0,56,0.6)' };
   const path = (pts) => { g.beginPath(); pts.forEach(([x, z], i) => { const [sx, sy] = P(x, z); if (i) g.lineTo(sx, sy); else g.moveTo(sx, sy); }); g.closePath(); };
   const rect = [[B.x0, B.z0], [B.x1, B.z0], [B.x1, B.z1], [B.x0, B.z1]];
   // the plan sheet: everything inside the walls and grandstands fades to ~10%
@@ -1269,6 +1288,8 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
   // (a done corner shows its lines only while hovered or selected, not as a lasting pin)
   const shown = d.points.filter((q) => q === hover || q === sel || (!measure.done.has(q.key) && pins.has(q.key)));
   const tags = [];                                   // drawn last, on top of the corner dots
+  const MAIN_FONT = g.font;
+  const busy = d.points.map((q) => { const [x, y] = P(q.x, q.z); return { x: x - 8 * k, y: y - 8 * k, w: 16 * k, h: 16 * k }; });
   for (const q of shown) {
     const m = measureFrom(q.x, q.z), [px, py] = P(q.x, q.z), [ex] = P(m.ex, q.z), [, ey] = P(q.x, m.ez);
     g.strokeStyle = C.accent; g.lineCap = 'round';
@@ -1285,8 +1306,62 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
     const red = { bg: C.accent, fg: '#fff', tri: '#fff', border: null };
     const hx = Math.abs(ex - px) >= hw + 2 * gap ? (px + ex) / 2 : px - Math.sign(ex - px || 1) * (hw / 2 + gap);
     const vy = Math.abs(ey - py) >= PH + 2 * gap ? (py + ey) / 2 : py - Math.sign(ey - py || 1) * (PH / 2 + gap);
-    tags.push(() => { drawLabel(hParts, hx, py, hw, red); drawLabel(vParts, px, vy, vw, red); });
+    tags.push(() => { g.font = MAIN_FONT; drawLabel(hParts, hx, py, hw, red); drawLabel(vParts, px, vy, vw, red); });
+    busy.push({ x: hx - hw / 2, y: py - PH / 2, w: hw, h: PH }, { x: px - vw / 2, y: vy - PH / 2, w: vw, h: PH });
   }
+  // neighbour measures (quieter: thin navy dimension line just inside the zone, small outlined tag):
+  // the length of each straight horizontal / vertical edge from the picked corner to the next corner
+  if (nbrs) for (const q of shown) {
+    for (const { n, len } of inlineNbrs(q)) {
+      const horiz = Math.abs(n.z - q.z) < 0.005, mx = (q.x + n.x) / 2, mz = (q.z + n.z) / 2;
+      const s = horiz ? (insidePoly(q.outline, mx, mz + 0.05) ? 1 : -1) : (insidePoly(q.outline, mx + 0.05, mz) ? 1 : -1);
+      const [ax, ay] = P(q.x, q.z), [bx, by] = P(n.x, n.z), [mx0, my0] = P(mx, mz), [mx1, my1] = P(horiz ? mx : mx + s, horiz ? mz + s : mz);
+      let nx = mx1 - mx0, ny = my1 - my0; const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;   // screen normal, into the zone
+      const o = 13 * k, ux = bx - ax, uy = by - ay, L = Math.hypot(ux, uy);
+      if (L < 4 * k) continue;
+      g.strokeStyle = C.nbr; g.lineWidth = 1.4 * k; g.setLineDash([]); g.lineCap = 'butt';
+      g.beginPath();
+      g.moveTo(ax + nx * 3 * k, ay + ny * 3 * k); g.lineTo(ax + nx * (o + 5 * k), ay + ny * (o + 5 * k));   // extension lines
+      g.moveTo(bx + nx * 3 * k, by + ny * 3 * k); g.lineTo(bx + nx * (o + 5 * k), by + ny * (o + 5 * k));
+      g.moveTo(ax + nx * o, ay + ny * o); g.lineTo(bx + nx * o, by + ny * o);                              // the dimension line
+      g.stroke();
+      for (const [cx2, cy2, dir] of [[ax, ay, 1], [bx, by, -1]]) {   // small arrowheads at each end
+        const tx = cx2 + nx * o, ty = cy2 + ny * o, fx = (ux / L) * dir, fy = (uy / L) * dir, a = 6 * k, w2 = 3 * k;
+        g.beginPath(); g.moveTo(tx, ty); g.lineTo(tx + fx * a - fy * w2, ty + fy * a + fx * w2); g.lineTo(tx + fx * a + fy * w2, ty + fy * a - fx * w2);
+        g.closePath(); g.fillStyle = C.nbr; g.fill();
+      }
+      // the tag: a small triangle pointing to the neighbour, then the length
+      const NF = 12.5 * k, NH = 21 * k, NFONT = `700 ${NF}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
+      g.font = NFONT;
+      const txt = `${len.toFixed(2)} m`, T = NF * 0.6, tw = g.measureText(txt).width, w = T + 5 * k + tw + 12 * k;
+      const dir = Math.abs(ux) > Math.abs(uy) ? (ux > 0 ? 'r' : 'l') : (uy > 0 ? 'd' : 'u');
+      const along = Math.abs(ux) > Math.abs(uy), ext = along ? w : NH;   // the tag's length along the line
+      const fits = L >= ext + 24 * k;
+      const side = (along ? NH : w) / 2 + 6 * k;                // half the tag across the line, plus a gap
+      const pushes = fits ? [o, o + side + NH / 2 + 2 * k, o + 2 * (side + NH / 2)] : [o + side, o + 2 * side + 4 * k, o + 3 * side + 8 * k];
+      const ts = fits ? [0.5, 0.3, 0.7, 0.2, 0.8].filter((t) => Math.min(t, 1 - t) * L >= ext / 2 + 8 * k) : [0.5];
+      let cx = (ax + bx) / 2 + nx * pushes[0], cy = (ay + by) / 2 + ny * pushes[0];
+      search: for (const pu of pushes) for (const t of ts.length ? ts : [0.5]) {
+        const x = ax + ux * t + nx * pu, y = ay + uy * t + ny * pu, r = { x: x - w / 2 - 2 * k, y: y - NH / 2 - 2 * k, w: w + 4 * k, h: NH + 4 * k };
+        if (!busy.some((b) => r.x < b.x + b.w && r.x + r.w > b.x && r.y < b.y + b.h && r.y + r.h > b.y)) { cx = x; cy = y; break search; }
+      }
+      busy.push({ x: cx - w / 2, y: cy - NH / 2, w, h: NH });
+      tags.unshift(() => {                          // under the red tags
+        g.font = NFONT;
+        g.fillStyle = 'rgba(255,255,255,0.97)'; g.beginPath(); g.roundRect(cx - w / 2, cy - NH / 2, w, NH, 6 * k); g.fill();
+        g.lineWidth = 1.2 * k; g.strokeStyle = C.nbr; g.stroke();
+        const c = cx - w / 2 + 6 * k + T / 2, h2 = T / 2;
+        g.beginPath();
+        if (dir === 'l') { g.moveTo(c - h2, cy); g.lineTo(c + h2, cy - h2); g.lineTo(c + h2, cy + h2); }
+        else if (dir === 'r') { g.moveTo(c + h2, cy); g.lineTo(c - h2, cy - h2); g.lineTo(c - h2, cy + h2); }
+        else if (dir === 'u') { g.moveTo(c, cy - h2); g.lineTo(c - h2, cy + h2); g.lineTo(c + h2, cy + h2); }
+        else { g.moveTo(c, cy + h2); g.lineTo(c - h2, cy - h2); g.lineTo(c + h2, cy - h2); }
+        g.closePath(); g.fillStyle = C.nbr; g.fill();
+        g.fillStyle = C.ink; g.textAlign = 'left'; g.textBaseline = 'middle'; g.fillText(txt, c + T / 2 + 5 * k, cy + 0.5 * k);
+      });
+    }
+  }
+  g.font = MAIN_FONT;
   // every corner (big enough to see and tap)
   for (const q of d.points) {
     const [sx, sy] = P(q.x, q.z), isDone = measure.done.has(q.key), on = shown.includes(q), picked = q === sel || q === hover;
@@ -2041,25 +2116,22 @@ function buildUI() {
     const n = measure.done.size;
     if (n && confirm(`Clear all ${n} completed mark${n === 1 ? '' : 's'} on this device?`)) { measure.done.clear(); saveDone(); syncMeasureHud(); }
   });
-  $('#measure-all').addEventListener('click', () => {
-    measure.all = !measure.all; $('#measure-all').setAttribute('aria-pressed', String(measure.all));
-    try { localStorage.setItem('b10-measure-all', measure.all ? '1' : '0'); } catch { /* ignore */ }
-  });
   $('#measure-save').addEventListener('click', saveMeasurePlan);
-  // bottom rail: colour / mono, corner distances, zone areas (also what Export A4 shows)
+  // bottom rail (settings, all remembered): colour / mono, then switches for every corner's distances,
+  // the picked corner's in-line neighbours, and zone areas. Export A4 uses the same settings.
+  const RAIL_SWITCHES = { all: '#measure-all', nbrs: '#measure-nbrs', areas: '#measure-areas' };
   const syncRail = () => {
     for (const b of $$('[data-mview]')) b.setAttribute('aria-checked', String((b.dataset.mview === 'mono') === measure.mono));
-    $('#measure-all').setAttribute('aria-pressed', String(measure.all));
-    $('#measure-areas').setAttribute('aria-pressed', String(measure.areas));
+    for (const [k, sel] of Object.entries(RAIL_SWITCHES)) $(sel).setAttribute('aria-checked', String(measure[k]));
   };
+  for (const [k, sel] of Object.entries(RAIL_SWITCHES)) $(sel).addEventListener('click', () => {
+    measure[k] = !measure[k];
+    try { localStorage.setItem(`b10-measure-${k}`, measure[k] ? '1' : '0'); } catch { /* ignore */ }
+    syncRail();
+  });
   for (const b of $$('[data-mview]')) b.addEventListener('click', () => {
     measure.mono = b.dataset.mview === 'mono';
     try { localStorage.setItem('b10-measure-mono', measure.mono ? '1' : '0'); } catch { /* ignore */ }
-    syncRail();
-  });
-  $('#measure-areas').addEventListener('click', () => {
-    measure.areas = !measure.areas;
-    try { localStorage.setItem('b10-measure-areas', measure.areas ? '1' : '0'); } catch { /* ignore */ }
     syncRail();
   });
   syncRail();
