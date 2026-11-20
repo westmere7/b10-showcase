@@ -1253,6 +1253,7 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
   // the hovered / selected / pinned corners: dotted dimension lines to the wall and the grandstand
   // (a done corner shows its lines only while hovered or selected, not as a lasting pin)
   const shown = d.points.filter((q) => q === hover || q === sel || (!measure.done.has(q.key) && pins.has(q.key)));
+  const tags = [];                                   // drawn last, on top of the corner dots
   for (const q of shown) {
     const m = measureFrom(q.x, q.z), [px, py] = P(q.x, q.z), [ex] = P(m.ex, q.z), [, ey] = P(q.x, m.ez);
     g.strokeStyle = '#E60028'; g.lineCap = 'round';
@@ -1269,8 +1270,7 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
     const red = { bg: '#E60028', fg: '#fff', tri: '#fff' };
     const hx = Math.abs(ex - px) >= hw + 2 * gap ? (px + ex) / 2 : px - Math.sign(ex - px || 1) * (hw / 2 + gap);
     const vy = Math.abs(ey - py) >= PH + 2 * gap ? (py + ey) / 2 : py - Math.sign(ey - py || 1) * (PH / 2 + gap);
-    drawLabel(hParts, hx, py, hw, red);
-    drawLabel(vParts, px, vy, vw, red);
+    tags.push(() => { drawLabel(hParts, hx, py, hw, red); drawLabel(vParts, px, vy, vw, red); });
   }
   // every corner (big enough to see and tap)
   for (const q of d.points) {
@@ -1289,6 +1289,7 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
     g.fillStyle = on ? '#E60028' : '#fff'; g.fill();
     g.lineWidth = 2 * k; g.strokeStyle = on ? '#fff' : '#050038'; g.stroke();
   }
+  for (const draw of tags) draw();                   // distance tags on top of everything
 }
 // a printable plan: the whole hall, landscape at A-paper proportions, every corner measured
 async function saveMeasurePlan() {
