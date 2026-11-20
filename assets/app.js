@@ -1298,7 +1298,7 @@ async function saveMeasurePlan() {
     // frame the walls and grandstands with room for the labels, below the title band
     camera.aspect = Wo / Ho;
     topv.fov = TOP_FOV.iso;
-    topv.size = Math.max((B.z1 - B.z0) / 2 / (1 - title * 2), (B.x1 - B.x0) / 2 / camera.aspect) * 1.2;
+    topv.size = Math.max((B.z1 - B.z0) / 2 / (1 - title * 2), (B.x1 - B.x0) / 2 / camera.aspect) * 1.13;
     topv.center.set((B.x0 + B.x1) / 2, floorY, (B.z0 + B.z1) / 2 - topv.size * title);
     applyTop();
     renderer.setPixelRatio(1);
@@ -1307,7 +1307,7 @@ async function saveMeasurePlan() {
     renderer.render(scene, camera);
     g.drawImage(canvas, 0, 0);                      // same task as the draw: still there
     const P = (x, z) => { _mp.set(x, floorY, z).project(camera); return [((_mp.x + 1) / 2) * Wo, ((1 - _mp.y) / 2) * Ho]; };
-    const k = Wo / 1900;
+    const k = Wo / 1600;                           // ~7.5 pt labels once printed on A4
     drawMeasureTo(g, P, k, { all: true });
     // title
     g.fillStyle = 'rgba(255,255,255,0.96)'; g.fillRect(0, 0, Wo, Ho * title);
@@ -1328,12 +1328,34 @@ async function saveMeasurePlan() {
     state.exporting = false;
   }
   if (ok) {
-    const blob = await new Promise((r) => out.toBlob(r, 'image/png'));
-    if (blob) downloadBlob(blob, `B10-Showcase_measurements_${fileStamp()}.png`);
+    const jpeg = await new Promise((r) => out.toBlob(r, 'image/jpeg', 0.92));
+    if (jpeg) downloadBlob(pdfA4(new Uint8Array(await jpeg.arrayBuffer()), Wo, Ho), `B10-Showcase_measurements_A4_${fileStamp()}.pdf`);
+    else ok = false;
   }
   out.width = out.height = 0;
   btn.disabled = false;
-  measureHint(ok ? 'Plan saved' : 'Couldn’t make the plan');
+  measureHint(ok ? 'A4 plan saved (PDF)' : 'Couldn’t make the plan');
+}
+// A one-page A4 landscape PDF holding one JPEG, centred with 10 mm margins (printers can't print to
+// the very edge). Written by hand: a PDF this simple needs no library, and it works offline.
+function pdfA4(jpeg, w, h) {
+  const W = 841.89, H = 595.28, m = 28.35;          // A4 landscape in points; 10 mm margin
+  const s = Math.min((W - 2 * m) / w, (H - 2 * m) / h), dw = w * s, dh = h * s, dx = (W - dw) / 2, dy = (H - dh) / 2;
+  const enc = new TextEncoder(), parts = [], at = [];
+  let len = 0;
+  const put = (x) => { const b = typeof x === 'string' ? enc.encode(x) : x; parts.push(b); len += b.length; };
+  const obj = (n, ...body) => { at[n] = len; put(`${n} 0 obj\n`); body.forEach(put); put('\nendobj\n'); };
+  put('%PDF-1.4\n%âãÏÓ\n');
+  obj(1, '<< /Type /Catalog /Pages 2 0 R >>');
+  obj(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+  obj(3, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>`);
+  obj(4, `<< /Type /XObject /Subtype /Image /Width ${w} /Height ${h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`, jpeg, '\nendstream');
+  const draw = `q ${dw.toFixed(2)} 0 0 ${dh.toFixed(2)} ${dx.toFixed(2)} ${dy.toFixed(2)} cm /Im0 Do Q`;
+  obj(5, `<< /Length ${draw.length} >>\nstream\n`, draw, '\nendstream');
+  const xref = len;
+  put(`xref\n0 6\n0000000000 65535 f \n${[1, 2, 3, 4, 5].map((n) => `${String(at[n]).padStart(10, '0')} 00000 n \n`).join('')}`
+    + `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+  return new Blob(parts, { type: 'application/pdf' });
 }
 stage.addEventListener('pointermove', (e) => { if (measure.on && e.pointerType === 'mouse') measure.mouse = { x: e.clientX, y: e.clientY }; });   // touch has no hover
 stage.addEventListener('pointerleave', () => { if (measure.on) { measure.mouse = null; measureHint(); } });
