@@ -249,6 +249,7 @@ function addGround() {
 
 // Red arrow painted on the floor at the entrance (the +Z side, where the Entrance view starts),
 // pointing into the hall. Part of the zone guides, so it shows and hides with them.
+let arrowOutline = null;
 function addEntranceArrow() {
   const L = 3.4, shaft = 0.5, head = 1.3, headLen = 1.1;   // metres
   const s = new THREE.Shape();
@@ -264,6 +265,8 @@ function addEntranceArrow() {
   arrow.name = 'EntranceArrow';
   arrow.position.set((walkBox.min.x + walkBox.max.x) / 2, floorY + 0.02, walkBox.max.z + 0.4);
   (layers.guides?.group ?? scene).add(arrow);
+  // its outline on the floor (x, z), for the measure plan (the shape lies flat, tip toward -z)
+  arrowOutline = s.getPoints().map((q) => [arrow.position.x + q.x, arrow.position.z - q.y]);
 }
 
 function loadLayer(entry, onProgress) {
@@ -965,6 +968,7 @@ function applyTop() {
 canvas.addEventListener('pointerdown', (e) => {
   if (!topv.on) return;
   topv.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  topv.multi = topv.pointers.size > 1 || (topv.pointers.size === 1 ? false : topv.multi);   // a new gesture starts clean
   canvas.setPointerCapture(e.pointerId);
 });
 canvas.addEventListener('pointermove', (e) => {
@@ -1006,12 +1010,12 @@ function syncMeasureHud() {
   b.disabled = !p;
   b.textContent = !p ? 'Mark done' : measure.done.has(p.key) ? `${p.id} done ✓ (undo)` : `Mark ${p.id} done`;
   b.setAttribute('aria-pressed', String(!!p && measure.done.has(p.key)));
-  $('#measure-reset').hidden = n === 0;
+  $('#measure-reset').disabled = n === 0;           // always there (greyed out), so the bar never jumps
 }
 const measureLayer = document.createElement('canvas');
 measureLayer.className = 'measure-layer'; measureLayer.hidden = true;
 stage.appendChild(measureLayer);
-const MEASURE_SNAP = 16;                          // px: how near the pointer must be to a corner
+const MEASURE_SNAP = 18, MEASURE_SNAP_TOUCH = 30;  // px: how near the pointer / a finger must be to a corner
 const MEASURE_HEIGHT = 0.3;                       // m above the floor: where the laser hits the walls and grandstands
 // The surfaces measured from (world metres, as in the model). Measured once on the model at laser
 // height: the hall and grandstands sliced 30 cm above the floor, rays cast from the middle of the hall
@@ -1053,7 +1057,7 @@ function buildMeasureData() {
   for (const m of layers.guides?.meshes ?? []) {
     if (!m.userData.fill) continue;
     const z = man.zones.find((x) => x.id === m.userData.zoneId);
-    zonesOut.push({ id: m.userData.zoneId, colour: z?.colour || '#888', pts: zoneOutline(m.geometry) });
+    zonesOut.push({ id: m.userData.zoneId, colour: z?.colour || '#888', short: z?.short || '', name: z?.name || '', pts: zoneOutline(m.geometry) });
   }
   const bounds = { ...MEASURE_BOUNDS };
   const points = [];
@@ -1064,6 +1068,11 @@ function buildMeasureData() {
   return { zones: zonesOut, bounds, points };
 }
 // distances from a floor point to the nearest wall (left / right) and grandstand (top / bottom)
+function mixHex(a, b, t) {                        // blend two #rrggbb colours
+  const p = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const [x, y] = [p(a), p(b)];
+  return `rgb(${x.map((v, i) => Math.round(v + (y[i] - v) * t)).join(',')})`;
+}
 function measureFrom(x, z) {
   const B = measure.data.bounds;
   const left = x - B.x0 <= B.x1 - x, top = z - B.z0 <= B.z1 - z;
@@ -1077,7 +1086,7 @@ function enterMeasure() {
   measure.data ||= buildMeasureData();
   measure.on = true;
   measure.prevIso = topv.iso; topv.iso = true;    // a true plan while measuring
-  stage.classList.add('measuring');
+  stage.classList.add('measuring'); document.body.classList.add('measuring');
   measureLayer.hidden = false;
   $('#measurehud').hidden = false;
   $('#btn-measure').classList.add('active');
@@ -1095,7 +1104,7 @@ function endMeasure() {
   measure.on = false; measure.pins.clear(); measure.hover = null; measure.sel = null; measure.mouse = null;
   topv.iso = measure.prevIso;
   if (topv.on && !topv.iso) topv.lens = { from: topv.fov, to: TOP_FOV.persp, t: 0 };
-  stage.classList.remove('measuring');
+  stage.classList.remove('measuring'); document.body.classList.remove('measuring');
   measureLayer.hidden = true;
   $('#measurehud').hidden = true;
   $('#btn-measure').classList.remove('active');
@@ -1111,27 +1120,30 @@ function measureToScreen(x, z) {
   const r = canvas.getBoundingClientRect(), s = stage.getBoundingClientRect();
   return [r.left - s.left + ((_mp.x + 1) / 2) * r.width, r.top - s.top + ((1 - _mp.y) / 2) * r.height];
 }
-function updateMeasureHover() {
-  if (!measure.mouse) { measure.hover = null; return; }
-  const s = stage.getBoundingClientRect(), mx = measure.mouse.x - s.left, my = measure.mouse.y - s.top;
-  let best = null, bd = MEASURE_SNAP;
-  for (const p of measure.data.points) {
+function measurePick(clientX, clientY, snap) {   // the corner nearest a screen point, within snap px
+  const s = stage.getBoundingClientRect(), mx = clientX - s.left, my = clientY - s.top;
+  let best = null, bd = snap;
+  for (const p of measure.data?.points ?? []) {
     const [sx, sy] = measureToScreen(p.x, p.z), d = Math.hypot(sx - mx, sy - my);
     if (d < bd) { bd = d; best = p; }
   }
+  return best;
+}
+function updateMeasureHover() {
+  const best = measure.mouse ? measurePick(measure.mouse.x, measure.mouse.y, MEASURE_SNAP) : null;
   measure.hover = best;
   const p = best || measure.sel;
   if (p) {
     const m = measureFrom(p.x, p.z);
     measureHint(`Corner ${p.id}${measure.done.has(p.key) ? ' ✓' : ''} · ${m.dx.toFixed(2)} m from the ${m.sideX} · ${m.dz.toFixed(2)} m from the ${m.sideZ}`);
-  } else {
+  } else if (measure.mouse) {
     const f = floorPointAt(measure.mouse.x, measure.mouse.y);
     const B = measure.data.bounds;
     if (f && f.x >= B.x0 && f.x <= B.x1 && f.z >= B.z0 && f.z <= B.z1) {
       const m = measureFrom(f.x, f.z);
       measureHint(`Pointer · ${m.dx.toFixed(2)} m from the ${m.sideX} · ${m.dz.toFixed(2)} m from the ${m.sideZ}`);
     } else measureHint();
-  }
+  } else measureHint(isTouch ? 'Tap a corner for its distances' : undefined);
 }
 function drawMeasure() {
   const W = stage.clientWidth, H = stage.clientHeight, dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -1149,79 +1161,113 @@ function drawMeasure() {
 // the plan drawing, used on screen and for the printable plan. P maps floor (x, z) to pixels; k scales
 // line widths and text
 function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), all = false } = {}) {
-  const d = measure.data, B = d.bounds;
+  // sized for an iPad held at arm's length: thick lines, big numbers (k scales everything)
+  const d = measure.data, B = d.bounds, FONT = 15 * k, PH = 26 * k, PAD = 16 * k;
   const path = (pts) => { g.beginPath(); pts.forEach(([x, z], i) => { const [sx, sy] = P(x, z); if (i) g.lineTo(sx, sy); else g.moveTo(sx, sy); }); g.closePath(); };
   const rect = [[B.x0, B.z0], [B.x1, B.z0], [B.x1, B.z1], [B.x0, B.z1]];
   // the plan sheet: everything inside the walls and grandstands fades to ~10%
   path(rect); g.fillStyle = 'rgba(238, 239, 243, 0.9)'; g.fill();
+  g.lineJoin = 'round';
   for (const z of d.zones) {
     path(z.pts);
     g.fillStyle = z.colour; g.globalAlpha = 0.18; g.fill(); g.globalAlpha = 1;
-    g.lineWidth = 2 * k; g.strokeStyle = z.colour; g.stroke();
+    g.lineWidth = 3 * k; g.strokeStyle = z.colour; g.stroke();
   }
   // the walls and grandstand fronts: what the measurements are taken from
-  path(rect); g.lineWidth = 2.5 * k; g.strokeStyle = '#050038'; g.stroke();
-  g.font = `600 ${12 * k}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
-  const pill = (text, x, y, fg = '#050038', bg = 'rgba(255,255,255,0.95)') => {
-    const w = g.measureText(text).width + 12 * k, h = 20 * k;
-    g.fillStyle = bg; g.beginPath(); g.roundRect(x - w / 2, y - h / 2, w, h, 6 * k); g.fill();
+  path(rect); g.lineWidth = 4 * k; g.strokeStyle = '#050038'; g.stroke();
+  if (arrowOutline) { path(arrowOutline); g.fillStyle = '#E60028'; g.fill(); }   // the entrance
+  // school names, as plain text in the middle of each zone (area centroid), in a deep shade of its colour
+  for (const z of d.zones) {
+    let A = 0, cx = 0, cz = 0;
+    z.pts.forEach(([x1, z1], i) => { const [x2, z2] = z.pts[(i + 1) % z.pts.length], c = x1 * z2 - x2 * z1; A += c; cx += (x1 + x2) * c; cz += (z1 + z2) * c; });
+    if (Math.abs(A) < 1e-6) continue;
+    const [tx, ty] = P(cx / (3 * A), cz / (3 * A));
+    const ink = mixHex(z.colour, '#050038', 0.5);
+    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = ink;
+    g.font = `800 ${30 * k}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
+    g.fillText(z.short, tx, ty - 12 * k);
+    g.font = `600 ${14 * k}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
+    // the full name, wrapped to fit inside the zone
+    const xs = z.pts.map(([x, zz]) => P(x, zz)[0]), maxW = (Math.max(...xs) - Math.min(...xs)) * 0.8;
+    const lines = [];
+    for (const word of z.name.split(' ')) {
+      const tryLine = lines.length ? `${lines[lines.length - 1]} ${word}` : word;
+      if (lines.length && g.measureText(tryLine).width > maxW) lines.push(word); else if (lines.length) lines[lines.length - 1] = tryLine; else lines.push(word);
+    }
+    lines.forEach((line, i) => g.fillText(line, tx, ty + (16 + i * 17) * k));
+  }
+  g.font = `700 ${FONT}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
+  const pill = (text, x, y, fg = '#050038', bg = 'rgba(255,255,255,0.96)', border = null) => {
+    const w = g.measureText(text).width + PAD, h = PH;
+    g.fillStyle = bg; g.beginPath(); g.roundRect(x - w / 2, y - h / 2, w, h, 7 * k); g.fill();
+    if (border) { g.lineWidth = 1.5 * k; g.strokeStyle = border; g.stroke(); }
     g.fillStyle = fg; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, x, y + 0.5 * k);
+    return w;
   };
   {
     const [ax, ay] = P(B.x0, B.z0), [bx] = P(B.x1, B.z0), [, cy] = P(B.x0, B.z1);
-    pill(`${(B.x1 - B.x0).toFixed(2)} m between the perforated walls`, (ax + bx) / 2, cy + 16 * k);   // below: the bar sits on top
-    g.save(); g.translate(ax - 16 * k, (ay + cy) / 2); g.rotate(-Math.PI / 2);
+    pill(`${(B.x1 - B.x0).toFixed(2)} m between the perforated walls`, (ax + bx) / 2, cy + 22 * k);   // below: the bar sits on top
+    g.save(); g.translate(ax - 22 * k, (ay + cy) / 2); g.rotate(-Math.PI / 2);
     pill(`${(B.z1 - B.z0).toFixed(2)} m between the grandstand fronts`, 0, 0); g.restore();
   }
-  // all corners: a compact label beside each, arrows pointing to the wall and grandstand measured from
+  // all corners: a label beside each (ID, arrows to the wall and grandstand measured from, distances);
+  // where it would cover another label or a corner, the next free spot nearby is used
   if (all) {
-    // labels sit beside their corner, away from the zone's middle; where they would overlap another
-    // label or a corner, the next free spot nearby is used
-    const placed = d.points.map((q) => { const [x, y] = P(q.x, q.z); return { x: x - 7 * k, y: y - 7 * k, w: 14 * k, h: 14 * k }; });
+    const placed = d.points.map((q) => { const [x, y] = P(q.x, q.z); return { x: x - 10 * k, y: y - 10 * k, w: 20 * k, h: 20 * k }; });
     const free = (r) => !placed.some((o) => r.x < o.x + o.w && r.x + r.w > o.x && r.y < o.y + o.h && r.y + r.h > o.y);
     const mid = {};
-    for (const z of d.zones) mid[z.id] = P(z.pts.reduce((s, q) => s + q[0], 0) / z.pts.length, z.pts.reduce((s, q) => s + q[1], 0) / z.pts.length);
+    for (const z of d.zones) mid[z.id] = P(z.pts.reduce((s2, q) => s2 + q[0], 0) / z.pts.length, z.pts.reduce((s2, q) => s2 + q[1], 0) / z.pts.length);
     for (const q of d.points) {
       const m = measureFrom(q.x, q.z), [sx, sy] = P(q.x, q.z), [ccx, ccy] = mid[q.zone], isDone = measure.done.has(q.key);
       let ox = sx - ccx, oy = sy - ccy; const l = Math.hypot(ox, oy) || 1; ox /= l; oy /= l;   // away from the zone's middle
       const text = `${isDone ? '✓ ' : ''}${q.id}  ${m.sideX.startsWith('left') ? '←' : '→'} ${m.dx.toFixed(2)}  ${m.sideZ.startsWith('top') ? '↑' : '↓'} ${m.dz.toFixed(2)}`;
-      const w = g.measureText(text).width + 12 * k, h = 20 * k;
-      const a0 = [ox * (w / 2 + 8 * k), oy * 16 * k];
-      const tries = [a0, [a0[0], a0[1] - 22 * k], [a0[0], a0[1] + 22 * k], [0, -20 * k], [0, 20 * k], [w / 2 + 10 * k, 0], [-(w / 2 + 10 * k), 0],
-        [a0[0], a0[1] - 44 * k], [a0[0], a0[1] + 44 * k], [0, -42 * k], [0, 42 * k]];
+      const w = g.measureText(text).width + PAD, h = PH, gap = PH + 4 * k;
+      const a0 = [ox * (w / 2 + 12 * k), oy * 20 * k];
+      const tries = [a0, [a0[0], a0[1] - gap], [a0[0], a0[1] + gap], [0, -gap], [0, gap], [w / 2 + 14 * k, 0], [-(w / 2 + 14 * k), 0],
+        [a0[0], a0[1] - 2 * gap], [a0[0], a0[1] + 2 * gap], [0, -2 * gap], [0, 2 * gap]];
       let at = a0;
       for (const t of tries) {
         const r = { x: sx + t[0] - w / 2 - 2 * k, y: sy + t[1] - h / 2 - 2 * k, w: w + 4 * k, h: h + 4 * k };
         if (free(r)) { at = t; placed.push(r); break; }
       }
-      if (Math.hypot(at[0], at[1]) > 40 * k) {      // moved well away: a thin leader back to the corner
-        g.beginPath(); g.moveTo(sx, sy); g.lineTo(sx + at[0], sy + at[1]); g.lineWidth = 1 * k; g.strokeStyle = 'rgba(5,0,56,0.45)'; g.stroke();
+      if (Math.hypot(at[0], at[1]) > 50 * k) {      // moved well away: a thin leader back to the corner
+        g.beginPath(); g.moveTo(sx, sy); g.lineTo(sx + at[0], sy + at[1]); g.lineWidth = 1.5 * k; g.strokeStyle = 'rgba(5,0,56,0.5)'; g.stroke();
       }
-      pill(text, sx + at[0], sy + at[1], isDone ? '#14713a' : '#050038', isDone ? 'rgba(226,245,233,0.96)' : 'rgba(255,255,255,0.95)');
+      pill(text, sx + at[0], sy + at[1], isDone ? '#14713a' : '#050038', isDone ? 'rgba(226,245,233,0.97)' : 'rgba(255,255,255,0.96)', isDone ? '#1f9d55' : null);
     }
   }
-  // the hovered and pinned corners: full dimension lines to the wall and the grandstand
+  // the hovered / selected / pinned corners: dotted dimension lines to the wall and the grandstand
   const shown = d.points.filter((q) => pins.has(q.key) || q === hover || q === sel);
+  // the wall and grandstand front each shown corner is measured from, highlighted along their length
+  const sides = new Set();
+  for (const q of shown) { const m = measureFrom(q.x, q.z); sides.add(`x${m.ex}`); sides.add(`z${m.ez}`); }
+  for (const sd of sides) {
+    const v = Number(sd.slice(1)), [x1, y1] = sd[0] === 'x' ? P(v, B.z0) : P(B.x0, v), [x2, y2] = sd[0] === 'x' ? P(v, B.z1) : P(B.x1, v);
+    g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2);
+    g.lineWidth = 9 * k; g.strokeStyle = 'rgba(230, 0, 40, 0.28)'; g.stroke();
+    g.lineWidth = 4 * k; g.strokeStyle = '#E60028'; g.stroke();
+  }
   for (const q of shown) {
     const m = measureFrom(q.x, q.z), [px, py] = P(q.x, q.z), [ex] = P(m.ex, q.z), [, ey] = P(q.x, m.ez);
-    g.strokeStyle = '#E60028'; g.lineWidth = 1.6 * k; g.lineCap = 'round';
-    g.setLineDash([0.1 * k, 5 * k]);                // dotted, so it reads apart from the zone outlines
-    g.lineWidth = 2.6 * k;
+    g.strokeStyle = '#E60028'; g.lineCap = 'round';
+    g.setLineDash([0.1 * k, 8 * k]); g.lineWidth = 4 * k;            // dotted, so it reads apart from the zone outlines
     g.beginPath(); g.moveTo(px, py); g.lineTo(ex, py); g.moveTo(px, py); g.lineTo(px, ey); g.stroke();
-    g.setLineDash([]); g.lineWidth = 1.6 * k; g.lineCap = 'butt';
-    g.beginPath(); g.moveTo(ex, py - 6 * k); g.lineTo(ex, py + 6 * k); g.moveTo(px - 6 * k, ey); g.lineTo(px + 6 * k, ey); g.stroke();
-    pill(`${m.dx.toFixed(2)} m`, (px + ex) / 2, py - 13 * k, '#E60028');
-    pill(`${m.dz.toFixed(2)} m`, px + (Math.abs(ey - py) > 60 * k ? 0 : 34 * k), (py + ey) / 2, '#E60028');
+    g.setLineDash([]); g.lineWidth = 3 * k; g.lineCap = 'butt';
+    g.beginPath(); g.moveTo(ex, py - 10 * k); g.lineTo(ex, py + 10 * k); g.moveTo(px - 10 * k, ey); g.lineTo(px + 10 * k, ey); g.stroke();   // end ticks
+    pill(`${m.dx.toFixed(2)} m`, (px + ex) / 2, py - 20 * k, '#fff', '#E60028');
+    pill(`${m.dz.toFixed(2)} m`, px + (Math.abs(ey - py) > 80 * k ? 0 : 50 * k), (py + ey) / 2, '#fff', '#E60028');
   }
+  // every corner (big enough to see and tap)
   for (const q of d.points) {
     const [sx, sy] = P(q.x, q.z), on = shown.includes(q), isDone = measure.done.has(q.key);
-    const r = (isDone ? 6.5 : on ? 6 : 4) * k;
+    const r = (isDone || on ? 9 : 6.5) * k;
     g.beginPath(); g.arc(sx, sy, r, 0, Math.PI * 2);
     g.fillStyle = isDone ? '#1f9d55' : on ? '#E60028' : '#fff'; g.fill();
-    g.lineWidth = (on || isDone ? 2 : 1.5) * k; g.strokeStyle = on && isDone ? '#E60028' : isDone || on ? '#fff' : '#050038'; g.stroke();
+    g.lineWidth = 2.5 * k; g.strokeStyle = on && isDone ? '#E60028' : isDone || on ? '#fff' : '#050038'; g.stroke();
+    if (on && isDone) { g.beginPath(); g.arc(sx, sy, r + 2.5 * k, 0, Math.PI * 2); g.lineWidth = 2.5 * k; g.strokeStyle = '#E60028'; g.stroke(); }
     if (isDone) {                                  // a tick
-      g.beginPath(); g.moveTo(sx - 2.8 * k, sy + 0.2 * k); g.lineTo(sx - 0.8 * k, sy + 2.3 * k); g.lineTo(sx + 3 * k, sy - 2.3 * k);
-      g.lineWidth = 1.6 * k; g.strokeStyle = '#fff'; g.stroke();
+      g.beginPath(); g.moveTo(sx - 4 * k, sy + 0.3 * k); g.lineTo(sx - 1.2 * k, sy + 3.2 * k); g.lineTo(sx + 4.2 * k, sy - 3.2 * k);
+      g.lineWidth = 2.4 * k; g.strokeStyle = '#fff'; g.lineCap = 'round'; g.stroke(); g.lineCap = 'butt';
     }
   }
 }
@@ -1252,14 +1298,14 @@ async function saveMeasurePlan() {
     renderer.render(scene, camera);
     g.drawImage(canvas, 0, 0);                      // same task as the draw: still there
     const P = (x, z) => { _mp.set(x, floorY, z).project(camera); return [((_mp.x + 1) / 2) * Wo, ((1 - _mp.y) / 2) * Ho]; };
-    const k = Wo / 1500;
+    const k = Wo / 1900;
     drawMeasureTo(g, P, k, { all: true });
     // title
     g.fillStyle = 'rgba(255,255,255,0.96)'; g.fillRect(0, 0, Wo, Ho * title);
     g.fillStyle = '#050038'; g.textAlign = 'left'; g.textBaseline = 'middle';
-    g.font = `700 ${22 * k}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
+    g.font = `700 ${28 * k}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
     g.fillText('B10 Showcase · zone corner measurements (metres)', 24 * k, Ho * title * 0.36);
-    g.font = `400 ${13 * k}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
+    g.font = `400 ${17 * k}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
     const nDone = measure.data.points.filter((q) => measure.done.has(q.key)).length;
     g.fillText(`← / → from the left / right perforated wall · ↑ / ↓ from the top / bottom grandstand front (at ${Math.round(MEASURE_HEIGHT * 100)} cm above the floor) · ✓ done: ${nDone} of ${measure.data.points.length} · ${new Date().toLocaleDateString()}`, 24 * k, Ho * title * 0.74);
     ok = true;
@@ -1280,7 +1326,7 @@ async function saveMeasurePlan() {
   btn.disabled = false;
   measureHint(ok ? 'Plan saved' : 'Couldn’t make the plan');
 }
-stage.addEventListener('pointermove', (e) => { if (measure.on) measure.mouse = { x: e.clientX, y: e.clientY }; });
+stage.addEventListener('pointermove', (e) => { if (measure.on && e.pointerType === 'mouse') measure.mouse = { x: e.clientX, y: e.clientY }; });   // touch has no hover
 stage.addEventListener('pointerleave', () => { if (measure.on) { measure.mouse = null; measureHint(); } });
 
 // ------------------------------------------------------------------ walk mode
@@ -1510,8 +1556,10 @@ canvas.addEventListener('pointerleave', () => { setHoverZone(null); setHoverBloc
 canvas.addEventListener('pointerup', (e) => {
   if (state.walking || !downAt) return;
   const d = downAt; downAt = null;
-  if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 5 || performance.now() - d.t > 450) return;   // was a drag
-  if (measure.on) { const p = measure.hover; if (p) { if (measure.pins.has(p.key) && measure.sel === p) { measure.pins.delete(p.key); measure.sel = null; } else { measure.pins.add(p.key); measure.sel = p; } } else measure.sel = null; syncMeasureHud(); return; }
+  const finger = e.pointerType !== 'mouse';
+  if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > (finger ? 12 : 5) || performance.now() - d.t > (finger ? 600 : 450)) return;   // was a drag
+  if (topv.multi) return;                         // the end of a two-finger pinch, not a tap
+  if (measure.on) { const p = measurePick(e.clientX, e.clientY, finger ? MEASURE_SNAP_TOUCH : MEASURE_SNAP); if (p) { if (measure.pins.has(p.key) && measure.sel === p) { measure.pins.delete(p.key); measure.sel = null; } else { measure.pins.add(p.key); measure.sel = p; } } else measure.sel = null; syncMeasureHud(); return; }
   // a stand under the cursor wins; open zone floor takes you to that school
   const blk = blockAt(e.clientX, e.clientY);
   if (blk) { if (topv.on) topFrame(blk.block.box, 1.8); else focusBlock(blk); return; }
