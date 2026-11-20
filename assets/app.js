@@ -1176,7 +1176,7 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
   // the walls and grandstand fronts: what the measurements are taken from
   path(rect); g.lineWidth = 4 * k; g.strokeStyle = '#050038'; g.stroke();
   if (arrowOutline) { path(arrowOutline); g.fillStyle = '#E60028'; g.fill(); }   // the entrance
-  // school names, as plain text in the middle of each zone (area centroid), in a deep shade of its colour
+  // school short names, as plain text in the middle of each zone (area centroid), in a deep shade of its colour
   for (const z of d.zones) {
     let A = 0, cx = 0, cz = 0;
     z.pts.forEach(([x1, z1], i) => { const [x2, z2] = z.pts[(i + 1) % z.pts.length], c = x1 * z2 - x2 * z1; A += c; cx += (x1 + x2) * c; cz += (z1 + z2) * c; });
@@ -1185,16 +1185,7 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
     const ink = mixHex(z.colour, '#050038', 0.5);
     g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = ink;
     g.font = `800 ${30 * k}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
-    g.fillText(z.short, tx, ty - 12 * k);
-    g.font = `600 ${14 * k}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
-    // the full name, wrapped to fit inside the zone
-    const xs = z.pts.map(([x, zz]) => P(x, zz)[0]), maxW = (Math.max(...xs) - Math.min(...xs)) * 0.8;
-    const lines = [];
-    for (const word of z.name.split(' ')) {
-      const tryLine = lines.length ? `${lines[lines.length - 1]} ${word}` : word;
-      if (lines.length && g.measureText(tryLine).width > maxW) lines.push(word); else if (lines.length) lines[lines.length - 1] = tryLine; else lines.push(word);
-    }
-    lines.forEach((line, i) => g.fillText(line, tx, ty + (16 + i * 17) * k));
+    g.fillText(z.short, tx, ty);                  // short name only
   }
   g.font = `700 ${FONT}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
   const pill = (text, x, y, fg = '#050038', bg = 'rgba(255,255,255,0.96)', border = null) => {
