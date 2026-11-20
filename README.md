@@ -33,6 +33,13 @@ SCD's model is rebuilt from the newest file in `SCD/` (a SketchUp `.skp`, or a `
 with the [OpenSKP](https://extensions.blender.org/add-ons/openskp-import-export/) add-on kept in `_tools/openskp`, so
 SketchUp isn't needed; the build turns SCD to whichever quarter turn best fits its zone and sets it on the floor.
 
+The zone outlines live in the master's **ZONE GUIDES** collection (since 20 Nov 2026): exact, symmetric about the
+hall's centre line (x = +0.0175 m, midway between the perforated walls), straight edges parallel to the walls and
+angled edges at 45°. They were made by `_tools/zone_regularize.py` and applied with `_tools/apply_zone_regularize.py`,
+which also moved each school as one piece to follow its zone. The school collections are marked `b10_placed`, so the
+build keeps them where the master has them; SCD, re-imported from SketchUp each build, gets the master's small
+`b10_shift` on top of its usual placement.
+
 The export stores any geometry shared between objects (array modifiers, copied stands) only once. This
 is lossless: every mesh keeps its exact shape, normals, UVs and materials.
 
