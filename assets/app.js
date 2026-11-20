@@ -1204,8 +1204,8 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
   // wall / grandstand each distance is measured from
   const TRI = FONT * 0.62;
   const labelWidth = (parts) => parts.reduce((s2, p2) => s2 + (typeof p2 === 'number' ? p2 : p2[0] === 't' && p2.length === 2 ? TRI + 4 * k : g.measureText(p2).width), 0);
-  const drawLabel = (parts, x, y, w) => {
-    g.fillStyle = 'rgba(255,255,255,0.96)'; g.beginPath(); g.roundRect(x - w / 2, y - PH / 2, w, PH, 7 * k); g.fill();
+  const drawLabel = (parts, x, y, w, { bg = 'rgba(255,255,255,0.96)', fg = '#050038', tri = '#E60028' } = {}) => {
+    g.fillStyle = bg; g.beginPath(); g.roundRect(x - w / 2, y - PH / 2, w, PH, 7 * k); g.fill();
     let cx = x - w / 2 + PAD / 2;
     g.textAlign = 'left'; g.textBaseline = 'middle';
     for (const p2 of parts) {
@@ -1217,10 +1217,10 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
         else if (dir === 'r') { g.moveTo(c + h2, y); g.lineTo(c - h2, y - h2); g.lineTo(c - h2, y + h2); }
         else if (dir === 'u') { g.moveTo(c, y - h2); g.lineTo(c - h2, y + h2); g.lineTo(c + h2, y + h2); }
         else { g.moveTo(c, y + h2); g.lineTo(c - h2, y - h2); g.lineTo(c + h2, y - h2); }
-        g.closePath(); g.fillStyle = '#E60028'; g.fill();
+        g.closePath(); g.fillStyle = tri; g.fill();
         cx += TRI + 4 * k; continue;
       }
-      g.fillStyle = '#050038'; g.fillText(p2, cx, y + 0.5 * k); cx += g.measureText(p2).width;
+      g.fillStyle = fg; g.fillText(p2, cx, y + 0.5 * k); cx += g.measureText(p2).width;
     }
   };
   // all corners: a label beside each (ID, arrows to the wall and grandstand measured from, distances);
@@ -1260,8 +1260,17 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
     g.beginPath(); g.moveTo(px, py); g.lineTo(ex, py); g.moveTo(px, py); g.lineTo(px, ey); g.stroke();
     g.setLineDash([]); g.lineWidth = 2 * k; g.lineCap = 'butt';
     g.beginPath(); g.moveTo(ex, py - 8 * k); g.lineTo(ex, py + 8 * k); g.moveTo(px - 8 * k, ey); g.lineTo(px + 8 * k, ey); g.stroke();   // end ticks
-    pill(`${m.dx.toFixed(2)} m`, (px + ex) / 2, py - 20 * k, '#fff', '#E60028');
-    pill(`${m.dz.toFixed(2)} m`, px + (Math.abs(ey - py) > 80 * k ? 0 : 50 * k), (py + ey) / 2, '#fff', '#E60028');
+    // tags: a small triangle pointing at the wall / grandstand, then the distance. Each tag sits ON its
+    // own line, so it's clear which is which; a line too short to hold its tag (near a wall, or zoomed
+    // out) gets the tag on its continuation past the corner instead, so the two never pile up
+    const hParts = [m.sideX.startsWith('left') ? 'tl' : 'tr', 5 * k, `${m.dx.toFixed(2)} m`];
+    const vParts = [m.sideZ.startsWith('top') ? 'tu' : 'td', 5 * k, `${m.dz.toFixed(2)} m`];
+    const hw = labelWidth(hParts) + PAD, vw = labelWidth(vParts) + PAD, gap = 14 * k;
+    const red = { bg: '#E60028', fg: '#fff', tri: '#fff' };
+    const hx = Math.abs(ex - px) >= hw + 2 * gap ? (px + ex) / 2 : px - Math.sign(ex - px || 1) * (hw / 2 + gap);
+    const vy = Math.abs(ey - py) >= PH + 2 * gap ? (py + ey) / 2 : py - Math.sign(ey - py || 1) * (PH / 2 + gap);
+    drawLabel(hParts, hx, py, hw, red);
+    drawLabel(vParts, px, vy, vw, red);
   }
   // every corner (big enough to see and tap)
   for (const q of d.points) {
