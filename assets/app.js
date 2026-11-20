@@ -1049,7 +1049,10 @@ function zoneOutline(geo) {                       // the outline of a flat zone 
     if (!next || next === start) break;
     loop.push(next); prev = cur; cur = next;
   }
-  const pts = loop.map((s) => s.split(',').map((v) => Number(v) / 1000));
+  // matched on whole millimetres, but the corners keep their exact coordinates (so areas and distances are exact)
+  const exact = new Map();
+  for (let i = 0; i < pos.count; i++) { const kk = key(i); if (!exact.has(kk)) exact.set(kk, [pos.getX(i), pos.getZ(i)]); }
+  const pts = loop.map((s) => exact.get(s) || s.split(',').map((v) => Number(v) / 1000));
   return pts.filter((q, i) => {                   // corners only (drop points on a straight run)
     const a = pts[(i - 1 + pts.length) % pts.length], c = pts[(i + 1) % pts.length];
     const cr = (q[0] - a[0]) * (c[1] - q[1]) - (q[1] - a[1]) * (c[0] - q[0]);
@@ -1061,13 +1064,17 @@ function buildMeasureData() {
   for (const m of layers.guides?.meshes ?? []) {
     if (!m.userData.fill) continue;
     const z = man.zones.find((x) => x.id === m.userData.zoneId);
-    zonesOut.push({ id: m.userData.zoneId, colour: z?.colour || '#888', short: z?.short || '', name: z?.name || '', pts: zoneOutline(m.geometry) });
+    // the manifest's exact outline (the .glb's positions are compressed, off by up to ~1 mm); traced from
+    // the mesh only for an older manifest without one
+    const pts = z?.outline?.length >= 3 ? z.outline.map(([x, zz]) => [x, zz]) : zoneOutline(m.geometry);
+    zonesOut.push({ id: m.userData.zoneId, colour: z?.colour || '#888', short: z?.short || '', name: z?.name || '', pts });
   }
   const bounds = { ...MEASURE_BOUNDS };
   const points = [];
   for (const z of zonesOut) {
     // the corners in outline order (so each knows the two it is joined to), numbered top to bottom, left to right
-    const ring = z.pts.map((q) => ({ key: `${z.id}:${q[0].toFixed(2)},${q[1].toFixed(2)}`, x: q[0], z: q[1], zone: z.id, colour: z.colour, outline: z.pts }));
+    const mm = (v) => (Math.round(v * 1000) / 1000).toFixed(2);   // done-mark keys: as before (from whole mm)
+    const ring = z.pts.map((q) => ({ key: `${z.id}:${mm(q[0])},${mm(q[1])}`, x: q[0], z: q[1], zone: z.id, colour: z.colour, outline: z.pts }));
     ring.forEach((q, i) => { q.nbrs = [ring[(i - 1 + ring.length) % ring.length], ring[(i + 1) % ring.length]]; });
     const sorted = [...ring].sort((a, b) => (Math.round(a.z * 2) - Math.round(b.z * 2)) || a.x - b.x);
     sorted.forEach((q, i) => { q.id = `${z.id}.${i + 1}`; points.push(q); });
@@ -1182,12 +1189,14 @@ function drawMeasure() {
   g.clearRect(0, 0, W, H);
   if (!topv.on || !measure.data) return;           // still flying into the top view
   updateMeasureHover();
-  drawMeasureTo(g, measureToScreen, 1, { hover: measure.hover, sel: measure.sel, pins: measure.pins, all: measure.all, mono: measure.mono, areas: measure.areas, nbrs: measure.nbrs });
+  drawMeasureTo(g, measureToScreen, 1, { hover: measure.hover, sel: measure.sel, pins: measure.pins, all: measure.all, mono: measure.mono, areas: measure.areas, nbrs: measure.nbrs,
+    focus: measure.hover?.zone ?? (isTouch ? measure.sel?.zone : null) ?? null });   // touch has no hover: the selected corner's zone
   stage.classList.toggle('measure-hover', !!measure.hover);
 }
 // the plan drawing, used on screen and for the printable plan. P maps floor (x, z) to pixels; k scales
 // line widths and text
-function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), all = false, mono = false, areas = false, nbrs = false } = {}) {
+function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), all = false, mono = false, areas = false, nbrs = false, focus = null } = {}) {
+  const FADE = 0.22;                               // other zones while one zone's corner is hovered
   // sized for an iPad held at arm's length: thick lines, big numbers (k scales everything)
   const d = measure.data, B = d.bounds, FONT = 15 * k, PH = 26 * k, PAD = 16 * k;
   // colours: the school colours, or mono (black on an almost white sheet) for the most contrast
@@ -1203,9 +1212,10 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
   path(rect); g.fillStyle = C.sheet; g.fill();
   g.lineJoin = 'round';
   for (const z of d.zones) {
+    const a = focus != null && z.id !== focus ? FADE : 1;
     path(z.pts);
-    if (C.fill) { g.fillStyle = z.colour; g.globalAlpha = C.fill; g.fill(); g.globalAlpha = 1; }
-    g.lineWidth = C.zoneW * k; g.strokeStyle = C.zone(z); g.stroke();
+    if (C.fill) { g.fillStyle = z.colour; g.globalAlpha = C.fill * a; g.fill(); }
+    g.globalAlpha = a; g.lineWidth = C.zoneW * k; g.strokeStyle = C.zone(z); g.stroke(); g.globalAlpha = 1;
   }
   // the walls and grandstand fronts: what the measurements are taken from
   path(rect); g.lineWidth = 4 * k; g.strokeStyle = C.bound; g.stroke();
@@ -1217,6 +1227,7 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
     if (Math.abs(A) < 1e-6) continue;
     const [tx, ty] = P(cx / (3 * A), cz / (3 * A));
     const ink = C.name(z);
+    g.globalAlpha = focus != null && z.id !== focus ? FADE : 1;
     g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = ink;
     g.font = `800 ${30 * k}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
     g.fillText(z.short, tx, areas ? ty - 12 * k : ty);   // short name only
@@ -1224,6 +1235,7 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
       g.font = `700 ${17 * k}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
       g.fillText(`${(Math.abs(A) / 2).toFixed(2)} m²`, tx, ty + 18 * k);
     }
+    g.globalAlpha = 1;
   }
   g.font = `700 ${FONT}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
   const pill = (text, x, y, fg = '#050038', bg = 'rgba(255,255,255,0.96)', border = null) => {
@@ -1293,7 +1305,7 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
   for (const q of shown) {
     const m = measureFrom(q.x, q.z), [px, py] = P(q.x, q.z), [ex] = P(m.ex, q.z), [, ey] = P(q.x, m.ez);
     g.strokeStyle = C.accent; g.lineCap = 'round';
-    g.setLineDash([0.1 * k, 6 * k]); g.lineWidth = 2.6 * k;          // dotted, so it reads apart from the zone outlines
+    g.setLineDash([]); g.lineWidth = 3.2 * k;                       // solid red: reads apart from the zone outlines
     g.beginPath(); g.moveTo(px, py); g.lineTo(ex, py); g.moveTo(px, py); g.lineTo(px, ey); g.stroke();
     g.setLineDash([]); g.lineWidth = 2 * k; g.lineCap = 'butt';
     g.beginPath(); g.moveTo(ex, py - 8 * k); g.lineTo(ex, py + 8 * k); g.moveTo(px - 8 * k, ey); g.lineTo(px + 8 * k, ey); g.stroke();   // end ticks
@@ -1311,8 +1323,14 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
   }
   // neighbour measures (quieter: thin navy dimension line just inside the zone, small outlined tag):
   // the length of each straight horizontal / vertical edge from the picked corner to the next corner
+  // (each edge once: two picked corners on the same edge share one measure, with no direction triangle)
+  const edgesDone = new Set();
   if (nbrs) for (const q of shown) {
     for (const { n, len } of inlineNbrs(q)) {
+      const ek = [q.key, n.key].sort().join('|');
+      if (edgesDone.has(ek)) continue;
+      edgesDone.add(ek);
+      const both = shown.includes(n);
       const horiz = Math.abs(n.z - q.z) < 0.005, mx = (q.x + n.x) / 2, mz = (q.z + n.z) / 2;
       const s = horiz ? (insidePoly(q.outline, mx, mz + 0.05) ? 1 : -1) : (insidePoly(q.outline, mx + 0.05, mz) ? 1 : -1);
       const [ax, ay] = P(q.x, q.z), [bx, by] = P(n.x, n.z), [mx0, my0] = P(mx, mz), [mx1, my1] = P(horiz ? mx : mx + s, horiz ? mz + s : mz);
@@ -1333,8 +1351,8 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
       // the tag: a small triangle pointing to the neighbour, then the length
       const NF = 12.5 * k, NH = 21 * k, NFONT = `700 ${NF}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
       g.font = NFONT;
-      const txt = `${len.toFixed(2)} m`, T = NF * 0.6, tw = g.measureText(txt).width, w = T + 5 * k + tw + 12 * k;
-      const dir = Math.abs(ux) > Math.abs(uy) ? (ux > 0 ? 'r' : 'l') : (uy > 0 ? 'd' : 'u');
+      const txt = `${len.toFixed(2)} m`, T = both ? 0 : NF * 0.6, tw = g.measureText(txt).width, w = T + (both ? 0 : 5 * k) + tw + 12 * k;
+      const dir = both ? null : Math.abs(ux) > Math.abs(uy) ? (ux > 0 ? 'r' : 'l') : (uy > 0 ? 'd' : 'u');
       const along = Math.abs(ux) > Math.abs(uy), ext = along ? w : NH;   // the tag's length along the line
       const fits = L >= ext + 24 * k;
       const side = (along ? NH : w) / 2 + 6 * k;                // half the tag across the line, plus a gap
@@ -1351,6 +1369,8 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
         g.fillStyle = 'rgba(255,255,255,0.97)'; g.beginPath(); g.roundRect(cx - w / 2, cy - NH / 2, w, NH, 6 * k); g.fill();
         g.lineWidth = 1.2 * k; g.strokeStyle = C.nbr; g.stroke();
         const c = cx - w / 2 + 6 * k + T / 2, h2 = T / 2;
+        g.textAlign = 'left'; g.textBaseline = 'middle';
+        if (!dir) { g.fillStyle = C.ink; g.fillText(txt, cx - w / 2 + 6 * k, cy + 0.5 * k); return; }
         g.beginPath();
         if (dir === 'l') { g.moveTo(c - h2, cy); g.lineTo(c + h2, cy - h2); g.lineTo(c + h2, cy + h2); }
         else if (dir === 'r') { g.moveTo(c + h2, cy); g.lineTo(c - h2, cy - h2); g.lineTo(c - h2, cy + h2); }
@@ -1362,15 +1382,12 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
     }
   }
   g.font = MAIN_FONT;
-  // every corner (big enough to see and tap); the picked corners' in-line neighbours get a soft navy halo
+  // every corner (big enough to see and tap); the picked corners' in-line neighbours are filled like the
+  // picked corner, in navy (black in mono)
   const nbrOn = new Set(nbrs ? shown.flatMap((q) => inlineNbrs(q).map((x) => x.n)).filter((n) => !shown.includes(n)) : []);
   for (const q of d.points) {
     const [sx, sy] = P(q.x, q.z), isDone = measure.done.has(q.key), on = shown.includes(q), picked = q === sel || q === hover;
-    if (nbrOn.has(q)) {
-      g.beginPath(); g.arc(sx, sy, 11 * k, 0, Math.PI * 2);
-      g.fillStyle = mono ? 'rgba(0,0,0,0.1)' : 'rgba(5,0,56,0.12)'; g.fill();
-      g.lineWidth = 1.5 * k; g.strokeStyle = C.nbr; g.stroke();
-    }
+    g.globalAlpha = focus != null && q.zone !== focus && !on ? FADE + 0.2 : 1;   // other zones' corners fade too (still tappable)
     if (isDone) {                                  // done: white with a green ring and a green tick
       const r = 7 * k;
       g.beginPath(); g.arc(sx, sy, r, 0, Math.PI * 2); g.fillStyle = '#fff'; g.fill();
@@ -1380,11 +1397,12 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
       if (picked) { g.beginPath(); g.arc(sx, sy, r + 3.5 * k, 0, Math.PI * 2); g.lineWidth = 2 * k; g.strokeStyle = C.accent; g.stroke(); }
       continue;
     }
-    const r = (on ? 7 : 5) * k;
+    const nb = !on && nbrOn.has(q), r = (on || nb ? 7 : 5) * k;
     g.beginPath(); g.arc(sx, sy, r, 0, Math.PI * 2);
-    g.fillStyle = on ? C.accent : '#fff'; g.fill();
-    g.lineWidth = 2 * k; g.strokeStyle = on ? '#fff' : C.ink; g.stroke();
+    g.fillStyle = on ? C.accent : nb ? (mono ? '#000' : '#050038') : '#fff'; g.fill();
+    g.lineWidth = 2 * k; g.strokeStyle = on || nb ? '#fff' : C.ink; g.stroke();
   }
+  g.globalAlpha = 1;
   for (const draw of tags) draw();                   // distance tags on top of everything
 }
 // a printable plan: the whole hall, landscape at A-paper proportions, every corner measured
