@@ -1902,9 +1902,14 @@ function focusBlock(sel) {
 function isMouseWheel(e) {
   if (e.deltaMode !== 0) return true;                       // line/page units: a wheel (Firefox)
   if (e.deltaX !== 0) return false;                         // sideways component: trackpad
-  if (typeof e.wheelDeltaY === 'number' && e.wheelDeltaY !== 0)
-    return Math.abs(e.wheelDeltaY) >= 120 && e.wheelDeltaY % 120 === 0;   // wheel notches are multiples of 120
-  return Math.abs(e.deltaY) >= 50 && Number.isInteger(e.deltaY);
+  // wheel notches are multiples of 120; page zoom or display scaling rounds them a little
+  // (e.g. -119 with deltaY 199.9999975 at 115%), so allow a few units / a hair off a whole number
+  if (typeof e.wheelDeltaY === 'number' && e.wheelDeltaY !== 0) {
+    const a = Math.abs(e.wheelDeltaY), r = a % 120;
+    return a >= 100 && Math.min(r, 120 - r) <= 4;
+  }
+  const ad = Math.abs(e.deltaY);
+  return ad >= 50 && Math.abs(ad - Math.round(ad)) < 0.01;
 }
 function panBy(dxPx, dyPx) {
   const dist = camera.position.distanceTo(controls.target);
