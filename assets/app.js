@@ -1179,6 +1179,10 @@ function updateMeasureHover() {
     } else measureHint();
   } else measureHint(isTouch ? 'Tap a corner for its distances' : undefined);
 }
+function measureView() {                         // the part of the stage not under the top bar / bottom rail
+  const s = stage.getBoundingClientRect(), hud = $('#measurehud').getBoundingClientRect(), rail = $('#measurerail').getBoundingClientRect();
+  return { x0: 8, y0: (hud.height ? hud.bottom - s.top : 0) + 8, x1: s.width - 8, y1: (rail.height ? rail.top - s.top : s.height) - 8 };
+}
 function drawMeasure() {
   const W = stage.clientWidth, H = stage.clientHeight, dpr = Math.min(window.devicePixelRatio || 1, 2);
   if (measureLayer.width !== Math.round(W * dpr) || measureLayer.height !== Math.round(H * dpr)) {
@@ -1190,12 +1194,12 @@ function drawMeasure() {
   if (!topv.on || !measure.data) return;           // still flying into the top view
   updateMeasureHover();
   drawMeasureTo(g, measureToScreen, 1, { hover: measure.hover, sel: measure.sel, pins: measure.pins, all: measure.all, mono: measure.mono, areas: measure.areas, nbrs: measure.nbrs,
-    focus: measure.hover?.zone ?? (isTouch ? measure.sel?.zone : null) ?? null });   // touch has no hover: the selected corner's zone
+    focus: measure.hover?.zone ?? (isTouch ? measure.sel?.zone : null) ?? null, view: measureView() });   // touch has no hover: the selected corner's zone
   stage.classList.toggle('measure-hover', !!measure.hover);
 }
 // the plan drawing, used on screen and for the printable plan. P maps floor (x, z) to pixels; k scales
 // line widths and text
-function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), all = false, mono = false, areas = false, nbrs = false, focus = null } = {}) {
+function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), all = false, mono = false, areas = false, nbrs = false, focus = null, view = null } = {}) {
   const FADE = 0.22;                               // other zones while one zone's corner is hovered
   // sized for an iPad held at arm's length: thick lines, big numbers (k scales everything)
   const d = measure.data, B = d.bounds, FONT = 15 * k, PH = 26 * k, PAD = 16 * k;
@@ -1302,6 +1306,21 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
   const tags = [];                                   // drawn last, on top of the corner dots
   const MAIN_FONT = g.font;
   const busy = d.points.map((q) => { const [x, y] = P(q.x, q.z); return { x: x - 8 * k, y: y - 8 * k, w: 16 * k, h: 16 * k }; });
+  // a two-line note (surface name, then how high to aim), anchored at (x, y) by its ax / ay side
+  const surfaceNote = ([t1, t2], x, y, ax, ay) => {
+    const F1 = `700 ${11.5 * k}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`, F2 = `500 ${10.5 * k}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
+    g.font = F1; const w1 = g.measureText(t1).width; g.font = F2; const w2 = g.measureText(t2).width;
+    const w = Math.max(w1, w2) + 14 * k, h = 34 * k;
+    let x0 = ax === 'right' ? x - w : ax === 'left' ? x : x - w / 2, y0 = ay === 'bottom' ? y - h : ay === 'top' ? y : y - h / 2;
+    if (view) {                                   // on screen: kept clear of the edges and the bars
+      x0 = Math.min(Math.max(x0, view.x0), view.x1 - w); y0 = Math.min(Math.max(y0, view.y0), view.y1 - h);
+    }
+    g.fillStyle = 'rgba(255,255,255,0.95)'; g.beginPath(); g.roundRect(x0, y0, w, h, 6 * k); g.fill();
+    g.lineWidth = 1.2 * k; g.strokeStyle = C.accent; g.stroke();
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = F1; g.fillStyle = C.ink; g.fillText(t1, x0 + w / 2, y0 + 11.5 * k);
+    g.font = F2; g.fillStyle = C.nbr; g.fillText(t2, x0 + w / 2, y0 + 24 * k);
+  };
   for (const q of shown) {
     const m = measureFrom(q.x, q.z), [px, py] = P(q.x, q.z), [ex] = P(m.ex, q.z), [, ey] = P(q.x, m.ez);
     g.strokeStyle = C.accent; g.lineCap = 'round';
@@ -1320,6 +1339,13 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
     const vy = Math.abs(ey - py) >= PH + 2 * gap ? (py + ey) / 2 : py - Math.sign(ey - py || 1) * (PH / 2 + gap);
     tags.push(() => { g.font = MAIN_FONT; drawLabel(hParts, hx, py, hw, red); drawLabel(vParts, px, vy, vw, red); });
     busy.push({ x: hx - hw / 2, y: py - PH / 2, w: hw, h: PH }, { x: px - vw / 2, y: vy - PH / 2, w: vw, h: PH });
+    // small notes just past each line's end: which surface the laser measure should land on
+    const laser = `laser ${Math.round(MEASURE_HEIGHT * 100)} cm above the floor`;
+    const left = m.sideX.startsWith('left'), top = m.sideZ.startsWith('top');
+    tags.push(() => {
+      surfaceNote(['Perforated wall', laser], ex + (left ? -12 * k : 12 * k), py, left ? 'right' : 'left', 'middle');
+      surfaceNote(['Grandstand front edge', laser], px, ey + (top ? -12 * k : 12 * k), 'center', top ? 'bottom' : 'top');
+    });
   }
   // neighbour measures (quieter: thin navy dimension line just inside the zone, small outlined tag):
   // the length of each straight horizontal / vertical edge from the picked corner to the next corner
