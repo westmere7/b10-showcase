@@ -1306,20 +1306,17 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
   const tags = [];                                   // drawn last, on top of the corner dots
   const MAIN_FONT = g.font;
   const busy = d.points.map((q) => { const [x, y] = P(q.x, q.z); return { x: x - 8 * k, y: y - 8 * k, w: 16 * k, h: 16 * k }; });
-  // a two-line note (surface name, then how high to aim), anchored at (x, y) by its ax / ay side
-  const surfaceNote = ([t1, t2], x, y, ax, ay) => {
-    const F1 = `700 ${11.5 * k}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`, F2 = `500 ${10.5 * k}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
-    g.font = F1; const w1 = g.measureText(t1).width; g.font = F2; const w2 = g.measureText(t2).width;
-    const w = Math.max(w1, w2) + 14 * k, h = 34 * k;
+  // a one-line note naming a surface, anchored at (x, y) by its ax / ay side
+  const surfaceNote = (text, x, y, ax, ay) => {
+    g.font = `700 ${11.5 * k}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
+    const w = g.measureText(text).width + 14 * k, h = 21 * k;
     let x0 = ax === 'right' ? x - w : ax === 'left' ? x : x - w / 2, y0 = ay === 'bottom' ? y - h : ay === 'top' ? y : y - h / 2;
     if (view) {                                   // on screen: kept clear of the edges and the bars
       x0 = Math.min(Math.max(x0, view.x0), view.x1 - w); y0 = Math.min(Math.max(y0, view.y0), view.y1 - h);
     }
     g.fillStyle = 'rgba(255,255,255,0.95)'; g.beginPath(); g.roundRect(x0, y0, w, h, 6 * k); g.fill();
     g.lineWidth = 1.2 * k; g.strokeStyle = C.accent; g.stroke();
-    g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.font = F1; g.fillStyle = C.ink; g.fillText(t1, x0 + w / 2, y0 + 11.5 * k);
-    g.font = F2; g.fillStyle = C.nbr; g.fillText(t2, x0 + w / 2, y0 + 24 * k);
+    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = C.ink; g.fillText(text, x0 + w / 2, y0 + h / 2 + 0.5 * k);
   };
   for (const q of shown) {
     const m = measureFrom(q.x, q.z), [px, py] = P(q.x, q.z), [ex] = P(m.ex, q.z), [, ey] = P(q.x, m.ez);
@@ -1340,11 +1337,10 @@ function drawMeasureTo(g, P, k, { hover = null, sel = null, pins = new Set(), al
     tags.push(() => { g.font = MAIN_FONT; drawLabel(hParts, hx, py, hw, red); drawLabel(vParts, px, vy, vw, red); });
     busy.push({ x: hx - hw / 2, y: py - PH / 2, w: hw, h: PH }, { x: px - vw / 2, y: vy - PH / 2, w: vw, h: PH });
     // small notes just past each line's end: which surface the laser measure should land on
-    const laser = `laser ${Math.round(MEASURE_HEIGHT * 100)} cm above the floor`;
     const left = m.sideX.startsWith('left'), top = m.sideZ.startsWith('top');
     tags.push(() => {
-      surfaceNote(['Perforated wall', laser], ex + (left ? -12 * k : 12 * k), py, left ? 'right' : 'left', 'middle');
-      surfaceNote(['Grandstand front edge', laser], px, ey + (top ? -12 * k : 12 * k), 'center', top ? 'bottom' : 'top');
+      surfaceNote('Perforated wall', ex + (left ? -12 * k : 12 * k), py, left ? 'right' : 'left', 'middle');
+      surfaceNote('Grandstand front edge', px, ey + (top ? -12 * k : 12 * k), 'center', top ? 'bottom' : 'top');
     });
   }
   // neighbour measures (quieter: thin navy dimension line just inside the zone, small outlined tag):
